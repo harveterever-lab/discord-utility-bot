@@ -189,13 +189,10 @@ client.on(Events.MessageCreate, async (message) => {
     /* old message may already be gone */
   }
 
-  const embed = new EmbedBuilder()
-    .setColor("#006400")
-    .setDescription(sticky.content)
-    .setFooter({ text: "Sticky Message" });
+  const stickyText = `📌 __Stickied Message__\n${sticky.content}`;
 
   try {
-    const sent = await message.channel.send({ embeds: [embed] });
+    const sent = await message.channel.send(stickyText);
     sticky.messageId = sent.id;
   } catch {
     /* ignore */
@@ -537,12 +534,9 @@ async function handleSticky(interaction) {
     }
   }
 
-  const embed = new EmbedBuilder()
-    .setColor("#006400")
-    .setDescription(content)
-    .setFooter({ text: "Sticky Message" });
+  const stickyText = `📌 __Stickied Message__\n${content}`;
 
-  const sent = await interaction.channel.send({ embeds: [embed] });
+  const sent = await interaction.channel.send(stickyText);
 
   stickyMessages.set(channelId, {
     messageId: sent.id,
