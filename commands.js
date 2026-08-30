@@ -166,6 +166,46 @@ const commandDefinitions = [
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName("staff")
+    .setDescription("Set the server's staff role (admin only).")
+    .addRoleOption((option) =>
+      option
+        .setName("role")
+        .setDescription("The role to designate as staff.")
+        .setRequired(true)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName("quarantine")
+    .setDescription("Quarantine a user (staff only).")
+    .addUserOption((option) =>
+      option
+        .setName("user")
+        .setDescription("The user to quarantine.")
+        .setRequired(true)
+    )
+    .addStringOption((option) =>
+      option
+        .setName("reason")
+        .setDescription("Why is this user being quarantined?")
+        .setRequired(true)
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName("unquarantine")
+    .setDescription("Remove a user from quarantine (staff only).")
+    .addUserOption((option) =>
+      option
+        .setName("user")
+        .setDescription("The user to unquarantine.")
+        .setRequired(true)
+    )
+    .toJSON(),
 ];
 
 module.exports = { commandDefinitions };

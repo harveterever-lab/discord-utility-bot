@@ -29,6 +29,14 @@ const afkUsers = new Map();
 // Map<channelId, { messageId: string, content: string }>
 const stickyMessages = new Map();
 
+// --- Staff role store (in-memory only; resets on restart) -------------------
+// Map<guildId, roleId>
+const staffRoles = new Map();
+
+// --- Quarantine store (in-memory only; resets on restart) ------------------
+// Map<guildId, Map<userId, string[]>>  (guild -> user -> saved role IDs)
+const quarantineStore = new Map();
+
 const ADMIN_PERMISSION = PermissionFlagsBits.Administrator;
 
 // --- Bot client ------------------------------------------------------------
@@ -113,6 +121,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
     case "role": {
       await requireAdmin(interaction, () => handleRole(interaction));
+      break;
+    }
+    case "staff": {
+      await requireAdmin(interaction, () => handleStaff(interaction));
+      break;
+    }
+    case "quarantine": {
+      await requireStaff(interaction, () => handleQuarantine(interaction));
+      break;
+    }
+    case "unquarantine": {
+      await requireStaff(interaction, () => handleUnquarantine(interaction));
       break;
     }
     default:
@@ -643,6 +663,219 @@ async function handleRole(interaction) {
   await interaction.reply({ embeds: [embed] });
 }
 
+// --- Staff / Quarantine ----------------------------------------------------
+
+async function handleStaff(interaction) {
+  const role = interaction.options.getRole("role");
+  const guildId = interaction.guildId;
+
+  staffRoles.set(guildId, role.id);
+
+  await interaction.reply({
+    content: `The staff role has been set to **${role.name}**.`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+async function getOrCreateQuarantineRole(guild) {
+  const existing = guild.roles.cache.find(
+    (r) => r.name === "Quarantined"
+  );
+  if (existing) return existing;
+
+  return guild.roles.create({
+    name: "Quarantined",
+    color: 0x006400,
+    permissions: [],
+    reason: "Quarantine role created by bot",
+  });
+}
+
+async function handleQuarantine(interaction) {
+  const targetUser = interaction.options.getUser("user");
+  const reason = interaction.options.getString("reason");
+  const guild = interaction.guild;
+
+  const targetMember = await guild.members
+    .fetch(targetUser.id)
+    .catch(() => null);
+
+  if (!targetMember) {
+    await interaction.reply({
+      content: "Could not find that user in this server.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const botMember = await guild.members.fetchMe();
+
+  let quarantineRole;
+  try {
+    quarantineRole = await getOrCreateQuarantineRole(guild);
+  } catch {
+    await interaction.reply({
+      content:
+        "I couldn't create or fetch the Quarantined role. Make sure I have the Manage Roles permission.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  if (quarantineRole.position >= botMember.roles.highest.position) {
+    await interaction.reply({
+      content:
+        "The Quarantined role is at or above my highest role. Move my role above it in the server settings.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  // Deny View Channel for the Quarantined role in every text channel.
+  for (const [, channel] of guild.channels.cache) {
+    if (channel.manageable) {
+      await channel.permissionOverwrites
+        .edit(quarantineRole, { ViewChannel: false })
+        .catch(() => {});
+    }
+  }
+
+  // Save the user's manageable roles, then remove them.
+  const savedRoleIds = [];
+  const rolesToRemove = [];
+
+  for (const [, role] of targetMember.roles.cache) {
+    if (role.id === guild.id) continue; // skip @everyone
+    if (role.position >= botMember.roles.highest.position) continue; // skip unmanageable
+    savedRoleIds.push(role.id);
+    rolesToRemove.push(role);
+  }
+
+  if (rolesToRemove.length > 0) {
+    try {
+      await targetMember.roles.remove(rolesToRemove);
+    } catch {
+      /* proceed even if some removals fail */
+    }
+  }
+
+  try {
+    await targetMember.roles.add(quarantineRole);
+  } catch {
+    await interaction.reply({
+      content:
+        "I couldn't assign the Quarantined role. Make sure I have the Manage Roles permission and my role is high enough.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  // Persist saved roles in memory.
+  if (!quarantineStore.has(guild.id)) {
+    quarantineStore.set(guild.id, new Map());
+  }
+  quarantineStore.get(guild.id).set(targetUser.id, savedRoleIds);
+
+  // DM the quarantined user. If it fails, continue normally.
+  try {
+    await targetUser.send(
+      `You have been quarantined in **${guild.name}** for: **${reason}**`
+    );
+  } catch {
+    /* DM may fail if user has DMs closed — continue normally */
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor("#006400")
+    .setDescription(
+      `**${targetUser.tag}** has been quarantined.\nReason: ${reason}`
+    )
+    .setFooter({ text: `Quarantined by ${interaction.user.tag}` });
+
+  await interaction.reply({ embeds: [embed] });
+}
+
+async function handleUnquarantine(interaction) {
+  const targetUser = interaction.options.getUser("user");
+  const guild = interaction.guild;
+
+  const targetMember = await guild.members
+    .fetch(targetUser.id)
+    .catch(() => null);
+
+  if (!targetMember) {
+    await interaction.reply({
+      content: "Could not find that user in this server.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const quarantineRole = guild.roles.cache.find(
+    (r) => r.name === "Quarantined"
+  );
+
+  if (!quarantineRole || !targetMember.roles.cache.has(quarantineRole.id)) {
+    await interaction.reply({
+      content: "That user is not currently quarantined.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const botMember = await guild.members.fetchMe();
+
+  if (quarantineRole.position >= botMember.roles.highest.position) {
+    await interaction.reply({
+      content:
+        "The Quarantined role is at or above my highest role. Move my role above it in the server settings.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  // Remove the Quarantined role.
+  try {
+    await targetMember.roles.remove(quarantineRole);
+  } catch {
+    await interaction.reply({
+      content:
+        "I couldn't remove the Quarantined role. Make sure I have the Manage Roles permission and my role is high enough.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  // Restore saved roles from memory, if available.
+  const guildQuarantine = quarantineStore.get(guild.id);
+  const savedRoleIds = guildQuarantine ? guildQuarantine.get(targetUser.id) : null;
+
+  if (savedRoleIds && savedRoleIds.length > 0) {
+    const rolesToAdd = [];
+    for (const roleId of savedRoleIds) {
+      const role = guild.roles.cache.get(roleId);
+      if (role && role.position < botMember.roles.highest.position) {
+        rolesToAdd.push(role);
+      }
+    }
+    if (rolesToAdd.length > 0) {
+      try {
+        await targetMember.roles.add(rolesToAdd);
+      } catch {
+        /* proceed even if some additions fail */
+      }
+    }
+    if (guildQuarantine) guildQuarantine.delete(targetUser.id);
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor("#006400")
+    .setDescription(`**${targetUser.tag}** has been removed from quarantine.`)
+    .setFooter({ text: `Unquarantined by ${interaction.user.tag}` });
+
+  await interaction.reply({ embeds: [embed] });
+}
+
 // --- Helpers ---------------------------------------------------------------
 
 async function requireAdmin(interaction, fn) {
@@ -656,6 +889,38 @@ async function requireAdmin(interaction, fn) {
     });
     return;
   }
+  await fn();
+}
+
+async function requireStaff(interaction, fn) {
+  // Administrators can always use staff commands.
+  if (interaction.memberPermissions && interaction.memberPermissions.has(ADMIN_PERMISSION)) {
+    await fn();
+    return;
+  }
+
+  const staffRoleId = staffRoles.get(interaction.guildId);
+  if (!staffRoleId) {
+    await interaction.reply({
+      content:
+        "No staff role has been set for this server. An administrator can set one with /staff.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const member = await interaction.guild.members
+    .fetch(interaction.user.id)
+    .catch(() => null);
+
+  if (!member || !member.roles.cache.has(staffRoleId)) {
+    await interaction.reply({
+      content: "You do not have the staff role required to use this command.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
   await fn();
 }
 
