@@ -130,6 +130,42 @@ const commandDefinitions = [
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName("sticky")
+    .setDescription("Post a sticky message that stays at the bottom of the channel (admin only).")
+    .addStringOption((option) =>
+      option
+        .setName("message")
+        .setDescription("The sticky message content.")
+        .setRequired(true)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName("unsticky")
+    .setDescription("Remove the sticky message from this channel (admin only).")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName("role")
+    .setDescription("Toggle a role on a user (admin only).")
+    .addUserOption((option) =>
+      option
+        .setName("user")
+        .setDescription("The user to toggle the role on.")
+        .setRequired(true)
+    )
+    .addRoleOption((option) =>
+      option
+        .setName("role")
+        .setDescription("The role to toggle.")
+        .setRequired(true)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .toJSON(),
 ];
 
 module.exports = { commandDefinitions };

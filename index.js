@@ -25,6 +25,10 @@ if (!token) {
 // Map<userId, { reason: string, timestamp: number }>
 const afkUsers = new Map();
 
+// --- Sticky message store (in-memory only; resets on restart) --------------
+// Map<channelId, { messageId: string, content: string }>
+const stickyMessages = new Map();
+
 const ADMIN_PERMISSION = PermissionFlagsBits.Administrator;
 
 // --- Bot client ------------------------------------------------------------
@@ -99,6 +103,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await requireAdmin(interaction, () => handleSlowmode(interaction));
       break;
     }
+    case "sticky": {
+      await requireAdmin(interaction, () => handleSticky(interaction));
+      break;
+    }
+    case "unsticky": {
+      await requireAdmin(interaction, () => handleUnsticky(interaction));
+      break;
+    }
+    case "role": {
+      await requireAdmin(interaction, () => handleRole(interaction));
+      break;
+    }
     default:
       break;
   }
@@ -150,6 +166,39 @@ client.on(Events.MessageCreate, async (message) => {
     } catch {
       /* ignore */
     }
+  }
+});
+
+// --- Sticky message reposting -----------------------------------------------
+// We use a separate listener so the logic stays self-contained. When a new
+// message arrives in a channel that has a sticky, we delete the old sticky
+// message and repost it at the bottom.
+client.on(Events.MessageCreate, async (message) => {
+  if (message.author.bot || !message.guild) return;
+
+  const sticky = stickyMessages.get(message.channelId);
+  if (!sticky) return;
+
+  // Delete the previous sticky message, then repost at the bottom.
+  try {
+    const oldMessage = await message.channel.messages
+      .fetch(sticky.messageId)
+      .catch(() => null);
+    if (oldMessage) await oldMessage.delete().catch(() => {});
+  } catch {
+    /* old message may already be gone */
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor("#006400")
+    .setDescription(sticky.content)
+    .setFooter({ text: "Sticky Message" });
+
+  try {
+    const sent = await message.channel.send({ embeds: [embed] });
+    sticky.messageId = sent.id;
+  } catch {
+    /* ignore */
   }
 });
 
@@ -465,6 +514,135 @@ async function handleSlowmode(interaction) {
       seconds === 0
         ? "Slowmode has been **disabled** for this channel."
         : `Slowmode set to **${seconds} second${seconds === 1 ? "" : "s"}** for this channel.`
+    )
+    .setFooter({ text: `Changed by ${interaction.user.tag}` });
+
+  await interaction.reply({ embeds: [embed] });
+}
+
+async function handleSticky(interaction) {
+  const content = interaction.options.getString("message");
+  const channelId = interaction.channelId;
+
+  // If there's already a sticky in this channel, delete the old message first.
+  const existing = stickyMessages.get(channelId);
+  if (existing) {
+    try {
+      const oldMessage = await interaction.channel.messages
+        .fetch(existing.messageId)
+        .catch(() => null);
+      if (oldMessage) await oldMessage.delete().catch(() => {});
+    } catch {
+      /* old message may already be gone */
+    }
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor("#006400")
+    .setDescription(content)
+    .setFooter({ text: "Sticky Message" });
+
+  const sent = await interaction.channel.send({ embeds: [embed] });
+
+  stickyMessages.set(channelId, {
+    messageId: sent.id,
+    content,
+  });
+
+  await interaction.reply({
+    content: "Sticky message has been set for this channel.",
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+async function handleUnsticky(interaction) {
+  const channelId = interaction.channelId;
+  const sticky = stickyMessages.get(channelId);
+
+  if (!sticky) {
+    await interaction.reply({
+      content: "There is no sticky message in this channel.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  try {
+    const oldMessage = await interaction.channel.messages
+      .fetch(sticky.messageId)
+      .catch(() => null);
+    if (oldMessage) await oldMessage.delete().catch(() => {});
+  } catch {
+    /* old message may already be gone */
+  }
+
+  stickyMessages.delete(channelId);
+
+  await interaction.reply({
+    content: "Sticky message has been removed from this channel.",
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+async function handleRole(interaction) {
+  const targetUser = interaction.options.getUser("user");
+  const role = interaction.options.getRole("role");
+
+  // Fetch the full member objects for hierarchy checks.
+  const targetMember = await interaction.guild.members
+    .fetch(targetUser.id)
+    .catch(() => null);
+
+  if (!targetMember) {
+    await interaction.reply({
+      content: "Could not find that user in this server.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const botMember = await interaction.guild.members.fetchMe();
+
+  // Check bot role hierarchy: the bot's highest role must be above the target role.
+  if (role.position >= botMember.roles.highest.position) {
+    await interaction.reply({
+      content: `I can't manage **${role.name}** because it is at or above my highest role. Move my role above it in the server settings.`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  // Check target hierarchy: the bot must be above the target member too.
+  if (targetMember.roles.highest.position >= botMember.roles.highest.position) {
+    await interaction.reply({
+      content: `I can't modify roles for **${targetUser.tag}** because their highest role is at or above mine.`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const hasRole = targetMember.roles.cache.has(role.id);
+
+  try {
+    if (hasRole) {
+      await targetMember.roles.remove(role);
+    } else {
+      await targetMember.roles.add(role);
+    }
+  } catch {
+    await interaction.reply({
+      content: "I couldn't update that user's roles. Make sure I have the Manage Roles permission and my role is high enough.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor("#006400")
+    .setDescription(
+      hasRole
+        ? `Removed **${role.name}** from ${targetUser}.`
+        : `Added **${role.name}** to ${targetUser}.`
     )
     .setFooter({ text: `Changed by ${interaction.user.tag}` });
 
