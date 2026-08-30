@@ -100,6 +100,36 @@ const commandDefinitions = [
         .setRequired(false)
     )
     .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName("userinfo")
+    .setDescription("Show information about a user.")
+    .addUserOption((option) =>
+      option
+        .setName("user")
+        .setDescription("Whose info to show (defaults to you).")
+        .setRequired(false)
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName("membercount")
+    .setDescription("Show the current server member count.")
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName("slowmode")
+    .setDescription("Set the slowmode for this channel (admin only).")
+    .addIntegerOption((option) =>
+      option
+        .setName("seconds")
+        .setDescription("Seconds between messages (0 to disable).")
+        .setRequired(true)
+        .setMinValue(0)
+        .setMaxValue(21600)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .toJSON(),
 ];
 
 module.exports = { commandDefinitions };

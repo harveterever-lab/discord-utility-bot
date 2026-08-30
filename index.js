@@ -87,6 +87,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await handleBanner(interaction);
       break;
     }
+    case "userinfo": {
+      await handleUserInfo(interaction);
+      break;
+    }
+    case "membercount": {
+      await handleMemberCount(interaction);
+      break;
+    }
+    case "slowmode": {
+      await requireAdmin(interaction, () => handleSlowmode(interaction));
+      break;
+    }
     default:
       break;
   }
@@ -339,6 +351,124 @@ async function handleBanner(interaction) {
   const row = new ActionRowBuilder().addComponents(downloadButton);
 
   await interaction.reply({ embeds: [embed], components: [row] });
+}
+
+async function handleUserInfo(interaction) {
+  const user = interaction.options.getUser("user") ?? interaction.user;
+
+  // Fetch the guild member for server-specific info (join date, roles).
+  let member = null;
+  if (interaction.guild) {
+    member = await interaction.guild.members
+      .fetch(user.id)
+      .catch(() => null);
+  }
+
+  const createdTimestamp = Math.floor(user.createdTimestamp / 1000);
+  const avatarUrl = user.displayAvatarURL({ size: 4096, extension: "png" });
+
+  const embed = new EmbedBuilder()
+    .setColor("#006400")
+    .setTitle(`${user.tag}`)
+    .setThumbnail(avatarUrl)
+    .addFields(
+      { name: "User ID", value: `\`${user.id}\``, inline: true },
+      { name: "Username", value: user.username, inline: true },
+      {
+        name: "Account Created",
+        value: `<t:${createdTimestamp}:F> (<t:${createdTimestamp}:R>)`,
+        inline: false,
+      }
+    )
+    .setFooter({ text: `Requested by ${interaction.user.tag}` });
+
+  if (member) {
+    const joinedTimestamp = Math.floor(member.joinedTimestamp / 1000);
+    // Exclude @everyone and list up to 30 roles to avoid hitting field limits.
+    const roles = member.roles.cache
+      .filter((r) => r.id !== interaction.guild.id)
+      .map((r) => `<@&${r.id}>`)
+      .join(", ");
+    embed.addFields(
+      {
+        name: "Server Join Date",
+        value: `<t:${joinedTimestamp}:F> (<t:${joinedTimestamp}:R>)`,
+        inline: false,
+      },
+      {
+        name: `Roles [${member.roles.cache.size - 1}]`,
+        value: roles || "None",
+        inline: false,
+      }
+    );
+  } else {
+    embed.addFields({
+      name: "Server Join Date",
+      value: "Not a member of this server.",
+      inline: false,
+    });
+  }
+
+  await interaction.reply({ embeds: [embed] });
+}
+
+async function handleMemberCount(interaction) {
+  if (!interaction.guild) {
+    await interaction.reply({
+      content: "This command can only be used in a server.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  // Force-fetch to get the most accurate count.
+  const guild = await interaction.guild.fetch();
+  const total = guild.memberCount;
+
+  const embed = new EmbedBuilder()
+    .setColor("#006400")
+    .setTitle("Server Member Count")
+    .setDescription(`**${guild.name}** currently has **${total}** members.`)
+    .setFooter({ text: `Requested by ${interaction.user.tag}` })
+    .setTimestamp();
+
+  await interaction.reply({ embeds: [embed] });
+}
+
+async function handleSlowmode(interaction) {
+  const seconds = interaction.options.getInteger("seconds");
+
+  // Discord's API limit is 21600 seconds (6 hours). The command option also
+  // enforces this via setMinValue/setMaxValue, but we validate again here.
+  if (seconds < 0 || seconds > 21600) {
+    await interaction.reply({
+      content: "Seconds must be between 0 and 21600 (6 hours).",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  try {
+    await interaction.channel.setRateLimitPerUser(seconds);
+  } catch {
+    await interaction.reply({
+      content:
+        "I couldn't change the slowmode for this channel. Make sure I have the Manage Channels permission.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor("#006400")
+    .setDescription(
+      seconds === 0
+        ? "Slowmode has been **disabled** for this channel."
+        : `Slowmode set to **${seconds} second${seconds === 1 ? "" : "s"}** for this channel.`
+    )
+    .setFooter({ text: `Changed by ${interaction.user.tag}` });
+
+  await interaction.reply({ embeds: [embed] });
 }
 
 // --- Helpers ---------------------------------------------------------------
