@@ -1,17 +1,1 @@
-{
-  "name": "discord-utility-bot",
-  "version": "1.1.0",
-  "description": "A lightweight Discord.js v14 bot with AFK, say, embed, react, purgeuser, sticky, role, slowmode, userinfo, emoji, and quarantine slash + prefix commands.",
-  "main": "index.js",
-  "type": "commonjs",
-  "private": true,
-  "scripts": {
-    "start": "node index.js",
-    "deploy": "node deploy-commands.js",
-    "test": "node --check index.js && node --check deploy-commands.js && node --check commands.js"
-  },
-  "dependencies": {
-    "discord.js": "^14.27.0",
-    "dotenv": "^17.2.1"
-  }
-}
+PLACEHOLDER
