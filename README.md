@@ -29,12 +29,6 @@ All prefix commands start with `!u`:
 
 | Command | Permission | Description |
 | --- | --- | --- |
-| `!u purgeuser @user amount` | Manage Messages | Purges recent messages from a specific user. |
-| `!u role @user @role` | Administrator | Gives or removes a role from a user. |
-| `!u sticky <message>` | Administrator | Creates a stickied message in the channel. |
-| `!u unsticky` | Administrator | Removes the sticky message from the channel. |
-| `!u slowmode <seconds>` | Administrator | Sets or disables channel slowmode (0 to disable). |
-| `!u userinfo [@user]` | Everyone | Shows user information. Defaults to you if no user is given. |
 | `!u emoji <name>` | Manage Expressions | Adds an attached image as a custom server emoji. Attach an image to your message and provide the emoji name. |
 
 Administrator-only commands are hidden from and unusable by non-admins via Discord's default member permissions, and are re-checked server-side.
