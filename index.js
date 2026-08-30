@@ -43,6 +43,8 @@ const quarantineStore = new Map();
 
 const ADMIN_PERMISSION = PermissionFlagsBits.Administrator;
 
+const startedAt = Date.now();
+
 // --- Bot client ------------------------------------------------------------
 const client = new Client({
   intents: [
@@ -146,6 +148,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
         "Manage Messages",
         () => handlePurgeUserSlash(interaction)
       );
+      break;
+    }
+    case "info": {
+      await handleInfo(interaction);
       break;
     }
     default:
@@ -1080,6 +1086,31 @@ async function prefixEmoji(message, args) {
 
     await message.reply(errMsg);
   }
+}
+
+async function handleInfo(interaction) {
+  const ping = Math.round(client.ws.ping);
+  const uptime = formatDuration(Date.now() - startedAt);
+  const avatarUrl = client.user.displayAvatarURL({ size: 4096, extension: "png" });
+
+  const embed = new EmbedBuilder()
+    .setColor("#006400")
+    .setTitle("Lumi — Bot Info")
+    .setThumbnail(avatarUrl)
+    .addFields(
+      { name: "Name", value: "Lumi", inline: true },
+      { name: "Ping", value: `${ping}ms`, inline: true },
+      {
+        name: "Invite",
+        value: "[Link](https://discord.com/oauth2/authorize?client_id=1543079364604985364&permissions=8&scope=bot%20applications.commands)",
+        inline: false,
+      },
+      { name: "Restarted", value: uptime, inline: true }
+    )
+    .setFooter({ text: `Requested by ${interaction.user.tag}` })
+    .setTimestamp();
+
+  await interaction.reply({ embeds: [embed] });
 }
 
 // --- Helpers ---------------------------------------------------------------
