@@ -169,12 +169,18 @@ const commandDefinitions = [
 
   new SlashCommandBuilder()
     .setName("staff")
-    .setDescription("Set the server's staff role (admin only).")
+    .setDescription("Set the server's staff role and quarantine log channel (admin only).")
     .addRoleOption((option) =>
       option
         .setName("role")
         .setDescription("The role to designate as staff.")
         .setRequired(true)
+    )
+    .addChannelOption((option) =>
+      option
+        .setName("log_channel")
+        .setDescription("The channel to send quarantine/unquarantine logs.")
+        .setRequired(false)
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .toJSON(),

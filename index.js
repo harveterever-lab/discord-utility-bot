@@ -33,6 +33,10 @@ const stickyMessages = new Map();
 // Map<guildId, roleId>
 const staffRoles = new Map();
 
+// --- Quarantine log channel store (in-memory only; resets on restart) --------
+// Map<guildId, channelId>
+const logChannels = new Map();
+
 // --- Quarantine store (in-memory only; resets on restart) ------------------
 // Map<guildId, Map<userId, string[]>>  (guild -> user -> saved role IDs)
 const quarantineStore = new Map();
@@ -667,12 +671,20 @@ async function handleRole(interaction) {
 
 async function handleStaff(interaction) {
   const role = interaction.options.getRole("role");
+  const logChannel = interaction.options.getChannel("log_channel");
   const guildId = interaction.guildId;
 
   staffRoles.set(guildId, role.id);
 
+  let content = `The staff role has been set to **${role.name}**.`;
+
+  if (logChannel) {
+    logChannels.set(guildId, logChannel.id);
+    content += ` The quarantine log channel has been set to **${logChannel.name}**.`;
+  }
+
   await interaction.reply({
-    content: `The staff role has been set to **${role.name}**.`,
+    content,
     flags: MessageFlags.Ephemeral,
   });
 }
@@ -793,6 +805,28 @@ async function handleQuarantine(interaction) {
     .setFooter({ text: `Quarantined by ${interaction.user.tag}` });
 
   await interaction.reply({ embeds: [embed] });
+
+  // Send a log embed to the configured log channel, if set.
+  const logChannelId = logChannels.get(guild.id);
+  if (logChannelId) {
+    const logChannel = guild.channels.cache.get(logChannelId);
+    if (logChannel) {
+      const logEmbed = new EmbedBuilder()
+        .setColor("#006400")
+        .setTitle("🔒 Quarantine Log")
+        .addFields(
+          { name: "User", value: `${targetUser} (\`${targetUser.id}\`)`, inline: false },
+          { name: "Moderator", value: `${interaction.user}`, inline: false },
+          { name: "Reason", value: reason, inline: false }
+        )
+        .setTimestamp();
+      try {
+        await logChannel.send({ embeds: [logEmbed] });
+      } catch {
+        /* log channel may not be sendable — ignore */
+      }
+    }
+  }
 }
 
 async function handleUnquarantine(interaction) {
@@ -874,6 +908,27 @@ async function handleUnquarantine(interaction) {
     .setFooter({ text: `Unquarantined by ${interaction.user.tag}` });
 
   await interaction.reply({ embeds: [embed] });
+
+  // Send a log embed to the configured log channel, if set.
+  const logChannelId = logChannels.get(guild.id);
+  if (logChannelId) {
+    const logChannel = guild.channels.cache.get(logChannelId);
+    if (logChannel) {
+      const logEmbed = new EmbedBuilder()
+        .setColor("#006400")
+        .setTitle("🔓 Unquarantine Log")
+        .addFields(
+          { name: "User", value: `${targetUser} (\`${targetUser.id}\`)`, inline: false },
+          { name: "Moderator", value: `${interaction.user}`, inline: false }
+        )
+        .setTimestamp();
+      try {
+        await logChannel.send({ embeds: [logEmbed] });
+      } catch {
+        /* log channel may not be sendable — ignore */
+      }
+    }
+  }
 }
 
 // --- Helpers ---------------------------------------------------------------
