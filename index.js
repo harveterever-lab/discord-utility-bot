@@ -33,9 +33,9 @@ const stickyMessages = new Map();
 // Map<guildId, roleId>
 const staffRoles = new Map();
 
-// --- Quarantine log channel store (in-memory only; resets on restart) --------
-// Map<guildId, channelId>
-const logChannels = new Map();
+// --- Quarantined role store (in-memory only; resets on restart) --------------
+// Map<guildId, roleId>
+const quarantinedRoles = new Map();
 
 // --- Quarantine store (in-memory only; resets on restart) ------------------
 // Map<guildId, Map<userId, string[]>>  (guild -> user -> saved role IDs)
@@ -671,35 +671,15 @@ async function handleRole(interaction) {
 
 async function handleStaff(interaction) {
   const role = interaction.options.getRole("role");
-  const logChannel = interaction.options.getChannel("log_channel");
+  const quarantinedRole = interaction.options.getRole("quarantined_role");
   const guildId = interaction.guildId;
 
   staffRoles.set(guildId, role.id);
-
-  let content = `The staff role has been set to **${role.name}**.`;
-
-  if (logChannel) {
-    logChannels.set(guildId, logChannel.id);
-    content += ` The quarantine log channel has been set to **${logChannel.name}**.`;
-  }
+  quarantinedRoles.set(guildId, quarantinedRole.id);
 
   await interaction.reply({
-    content,
+    content: `The staff role has been set to **${role.name}** and the quarantined role has been set to **${quarantinedRole.name}**.`,
     flags: MessageFlags.Ephemeral,
-  });
-}
-
-async function getOrCreateQuarantineRole(guild) {
-  const existing = guild.roles.cache.find(
-    (r) => r.name === "Quarantined"
-  );
-  if (existing) return existing;
-
-  return guild.roles.create({
-    name: "Quarantined",
-    color: 0x006400,
-    permissions: [],
-    reason: "Quarantine role created by bot",
   });
 }
 
@@ -720,36 +700,35 @@ async function handleQuarantine(interaction) {
     return;
   }
 
-  const botMember = await guild.members.fetchMe();
-
-  let quarantineRole;
-  try {
-    quarantineRole = await getOrCreateQuarantineRole(guild);
-  } catch {
+  const quarantinedRoleId = quarantinedRoles.get(guild.id);
+  if (!quarantinedRoleId) {
     await interaction.reply({
       content:
-        "I couldn't create or fetch the Quarantined role. Make sure I have the Manage Roles permission.",
+        "No quarantined role has been set for this server. An administrator can set one with /staff.",
       flags: MessageFlags.Ephemeral,
     });
     return;
   }
+
+  const quarantineRole = guild.roles.cache.get(quarantinedRoleId);
+  if (!quarantineRole) {
+    await interaction.reply({
+      content:
+        "The configured quarantined role no longer exists. An administrator can set a new one with /staff.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const botMember = await guild.members.fetchMe();
 
   if (quarantineRole.position >= botMember.roles.highest.position) {
     await interaction.reply({
       content:
-        "The Quarantined role is at or above my highest role. Move my role above it in the server settings.",
+        "The quarantined role is at or above my highest role. Move my role above it in the server settings.",
       flags: MessageFlags.Ephemeral,
     });
     return;
-  }
-
-  // Deny View Channel for the Quarantined role in every text channel.
-  for (const [, channel] of guild.channels.cache) {
-    if (channel.manageable) {
-      await channel.permissionOverwrites
-        .edit(quarantineRole, { ViewChannel: false })
-        .catch(() => {});
-    }
   }
 
   // Save the user's manageable roles, then remove them.
@@ -776,7 +755,7 @@ async function handleQuarantine(interaction) {
   } catch {
     await interaction.reply({
       content:
-        "I couldn't assign the Quarantined role. Make sure I have the Manage Roles permission and my role is high enough.",
+        "I couldn't assign the quarantined role. Make sure I have the Manage Roles permission and my role is high enough.",
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -799,34 +778,15 @@ async function handleQuarantine(interaction) {
 
   const embed = new EmbedBuilder()
     .setColor("#006400")
-    .setDescription(
-      `**${targetUser.tag}** has been quarantined.\nReason: ${reason}`
+    .setTitle("🔒 Quarantine Log")
+    .addFields(
+      { name: "User", value: `${targetUser} (\`${targetUser.id}\`)`, inline: false },
+      { name: "Moderator", value: `${interaction.user}`, inline: false },
+      { name: "Reason", value: reason, inline: false }
     )
-    .setFooter({ text: `Quarantined by ${interaction.user.tag}` });
+    .setTimestamp();
 
   await interaction.reply({ embeds: [embed] });
-
-  // Send a log embed to the configured log channel, if set.
-  const logChannelId = logChannels.get(guild.id);
-  if (logChannelId) {
-    const logChannel = guild.channels.cache.get(logChannelId);
-    if (logChannel) {
-      const logEmbed = new EmbedBuilder()
-        .setColor("#006400")
-        .setTitle("🔒 Quarantine Log")
-        .addFields(
-          { name: "User", value: `${targetUser} (\`${targetUser.id}\`)`, inline: false },
-          { name: "Moderator", value: `${interaction.user}`, inline: false },
-          { name: "Reason", value: reason, inline: false }
-        )
-        .setTimestamp();
-      try {
-        await logChannel.send({ embeds: [logEmbed] });
-      } catch {
-        /* log channel may not be sendable — ignore */
-      }
-    }
-  }
 }
 
 async function handleUnquarantine(interaction) {
@@ -845,9 +805,17 @@ async function handleUnquarantine(interaction) {
     return;
   }
 
-  const quarantineRole = guild.roles.cache.find(
-    (r) => r.name === "Quarantined"
-  );
+  const quarantinedRoleId = quarantinedRoles.get(guild.id);
+  if (!quarantinedRoleId) {
+    await interaction.reply({
+      content:
+        "No quarantined role has been set for this server. An administrator can set one with /staff.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const quarantineRole = guild.roles.cache.get(quarantinedRoleId);
 
   if (!quarantineRole || !targetMember.roles.cache.has(quarantineRole.id)) {
     await interaction.reply({
@@ -862,19 +830,19 @@ async function handleUnquarantine(interaction) {
   if (quarantineRole.position >= botMember.roles.highest.position) {
     await interaction.reply({
       content:
-        "The Quarantined role is at or above my highest role. Move my role above it in the server settings.",
+        "The quarantined role is at or above my highest role. Move my role above it in the server settings.",
       flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
-  // Remove the Quarantined role.
+  // Remove the quarantined role.
   try {
     await targetMember.roles.remove(quarantineRole);
   } catch {
     await interaction.reply({
       content:
-        "I couldn't remove the Quarantined role. Make sure I have the Manage Roles permission and my role is high enough.",
+        "I couldn't remove the quarantined role. Make sure I have the Manage Roles permission and my role is high enough.",
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -904,31 +872,14 @@ async function handleUnquarantine(interaction) {
 
   const embed = new EmbedBuilder()
     .setColor("#006400")
-    .setDescription(`**${targetUser.tag}** has been removed from quarantine.`)
-    .setFooter({ text: `Unquarantined by ${interaction.user.tag}` });
+    .setTitle("🔓 Unquarantine Log")
+    .addFields(
+      { name: "User", value: `${targetUser} (\`${targetUser.id}\`)`, inline: false },
+      { name: "Moderator", value: `${interaction.user}`, inline: false }
+    )
+    .setTimestamp();
 
   await interaction.reply({ embeds: [embed] });
-
-  // Send a log embed to the configured log channel, if set.
-  const logChannelId = logChannels.get(guild.id);
-  if (logChannelId) {
-    const logChannel = guild.channels.cache.get(logChannelId);
-    if (logChannel) {
-      const logEmbed = new EmbedBuilder()
-        .setColor("#006400")
-        .setTitle("🔓 Unquarantine Log")
-        .addFields(
-          { name: "User", value: `${targetUser} (\`${targetUser.id}\`)`, inline: false },
-          { name: "Moderator", value: `${interaction.user}`, inline: false }
-        )
-        .setTimestamp();
-      try {
-        await logChannel.send({ embeds: [logEmbed] });
-      } catch {
-        /* log channel may not be sendable — ignore */
-      }
-    }
-  }
 }
 
 // --- Helpers ---------------------------------------------------------------
