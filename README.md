@@ -1,8 +1,8 @@
 # Discord Utility Bot
 
-A lightweight [Discord.js](https://discord.js.org/) v14 bot with six slash commands. AFK data is kept in memory only — no database required.
+A lightweight [Discord.js](https://discord.js.org/) v14 bot with slash commands, prefix commands (`!u`), AFK tracking, moderation tools, and more.
 
-## Commands
+## Slash Commands
 
 | Command | Permission | Description |
 | --- | --- | --- |
@@ -10,8 +10,32 @@ A lightweight [Discord.js](https://discord.js.org/) v14 bot with six slash comma
 | `/say [message]` | Administrator | The bot sends the provided message in the channel. |
 | `/embed [description] [embed_color] [image] [footer]` | Administrator | The bot sends a rich embed. `description` is required; the rest are optional. Default color is dark green `#006400`. Hex colors are validated. |
 | `/react [message_id] [emojis]` | Administrator | Adds the given emojis (separated by spaces) to the specified message. Supports Unicode, custom (`:name:id`), and animated (`a:name:id`) emojis. |
-| `/avatar [user]` | Everyone | Shows the selected user's Discord avatar in an embed at the highest available quality, with a Download Avatar button. Defaults to your own avatar if no user is given. |
-| `/banner [user]` | Everyone | Shows the selected user's Discord banner in an embed at the highest available quality, with a Download Banner button. Defaults to your own banner if no user is given. Shows a clear message if the user has no banner. |
+| `/avatar [user]` | Everyone | Shows the selected user's Discord avatar in an embed at the highest available quality, with a Download Avatar button. |
+| `/banner [user]` | Everyone | Shows the selected user's Discord banner in an embed at the highest available quality, with a Download Banner button. |
+| `/userinfo [user]` | Everyone | Shows information about a user. |
+| `/membercount` | Everyone | Shows the current server member count. |
+| `/slowmode [seconds]` | Administrator | Sets the slowmode for this channel. |
+| `/sticky [message]` | Administrator | Posts a sticky message that stays at the bottom of the channel. |
+| `/unsticky` | Administrator | Removes the sticky message from this channel. |
+| `/role [user] [role]` | Administrator | Toggles a role on a user. |
+| `/staff [role] [quarantined_role]` | Administrator | Sets the server's staff role and quarantined role. |
+| `/quarantine [user] [reason]` | Staff | Quarantines a user by stripping roles and assigning a quarantined role. |
+| `/unquarantine [user]` | Staff | Removes a user from quarantine and restores their roles. |
+| `/purgeuser [user] [amount]` | Manage Messages | Deletes the specified number of recent messages from a specific user in this channel. |
+
+## Prefix Commands (`!u`)
+
+All prefix commands start with `!u`:
+
+| Command | Permission | Description |
+| --- | --- | --- |
+| `!u purgeuser @user amount` | Manage Messages | Purges recent messages from a specific user. |
+| `!u role @user @role` | Administrator | Gives or removes a role from a user. |
+| `!u sticky <message>` | Administrator | Creates a stickied message in the channel. |
+| `!u unsticky` | Administrator | Removes the sticky message from the channel. |
+| `!u slowmode <seconds>` | Administrator | Sets or disables channel slowmode (0 to disable). |
+| `!u userinfo [@user]` | Everyone | Shows user information. Defaults to you if no user is given. |
+| `!u emoji <name>` | Manage Expressions | Adds an attached image as a custom server emoji. Attach an image to your message and provide the emoji name. |
 
 Administrator-only commands are hidden from and unusable by non-admins via Discord's default member permissions, and are re-checked server-side.
 
@@ -27,7 +51,7 @@ Administrator-only commands are hidden from and unusable by non-admins via Disco
 
 In the Developer Portal, under your application → **Bot**, enable:
 
-- **MESSAGE CONTENT INTENT** (required to detect mentions and remove AFK on send)
+- **MESSAGE CONTENT INTENT** (required to detect mentions, remove AFK on send, and read `!u` prefix commands)
 - **SERVER MEMBERS INTENT** (optional, improves member lookups)
 
 ### 3. Install dependencies
@@ -74,8 +98,7 @@ npm start
 
 This bot is configured for [Railway](https://railway.app/).
 
-1. Push this repository to GitHub (see the GitHub setup steps below if you
-   haven't already).
+1. Push this repository to GitHub.
 2. In Railway, click **New Project → Deploy from GitHub repo** and select this
    repository.
 3. Railway auto-detects Node.js via the `start` script (`node index.js`).
@@ -87,30 +110,16 @@ This bot is configured for [Railway](https://railway.app/).
      require it)
 5. Deploy. Railway will install dependencies and start the bot.
 
-> Slash commands are registered by running `npm run deploy` locally (or in a
-> Railway shell). The running bot does **not** re-register commands on every
-> start, which keeps it lightweight.
-
-## GitHub Setup
-
-```bash
-git init
-git add .
-git commit -m "Initial commit: Discord.js v14 utility bot"
-git branch -M main
-git remote add origin https://github.com/<your-username>/<your-repo>.git
-git push -u origin main
-```
-
-Future updates are pushed to the same repository with normal `git add`,
-`git commit`, and `git push` commands.
+> Slash commands are auto-registered on startup. You can also run
+> `npm run deploy` manually to refresh commands without restarting.
 
 ## Project Structure
 
 ```
 .
-├── index.js              # Bot runtime: handles events + commands
-├── deploy-commands.js    # One-time slash command registration
+├── index.js              # Bot runtime: handles events + commands (slash + prefix)
+├── commands.js           # Slash command definitions
+├── deploy-commands.js    # Manual slash command registration
 ├── package.json
 ├── Procfile              # Railway/Heroku process declaration
 ├── .env.example          # Template for environment variables
@@ -119,7 +128,8 @@ Future updates are pushed to the same repository with normal `git add`,
 
 ## Notes
 
-- AFK data lives in process memory and resets whenever the bot restarts.
+- AFK, sticky message, staff role, and quarantine data lives in process memory
+  and resets whenever the bot restarts.
 - The bot token is read from the `DISCORD_TOKEN` environment variable and is
   never written to disk or committed.
 - No database is used.

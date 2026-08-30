@@ -139,6 +139,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await requireStaff(interaction, () => handleUnquarantine(interaction));
       break;
     }
+    case "purgeuser": {
+      await requirePermission(
+        interaction,
+        PermissionFlagsBits.ManageMessages,
+        "Manage Messages",
+        () => handlePurgeUserSlash(interaction)
+      );
+      break;
+    }
     default:
       break;
   }
@@ -220,6 +229,47 @@ client.on(Events.MessageCreate, async (message) => {
     sticky.messageId = sent.id;
   } catch {
     /* ignore */
+  }
+});
+
+// --- Prefix command handler (!u) -------------------------------------------
+client.on(Events.MessageCreate, async (message) => {
+  if (message.author.bot || !message.guild) return;
+
+  const content = message.content;
+
+  // Only respond to the "!u" prefix.
+  if (!content.startsWith("!u ")) return;
+
+  const args = content.slice(3).trim().split(/\s+/);
+  const subcommand = args[0]?.toLowerCase();
+
+  if (!subcommand) return;
+
+  switch (subcommand) {
+    case "purgeuser":
+      await prefixPurgeUser(message, args);
+      break;
+    case "role":
+      await prefixRole(message, args);
+      break;
+    case "sticky":
+      await prefixSticky(message, args);
+      break;
+    case "unsticky":
+      await prefixUnsticky(message);
+      break;
+    case "slowmode":
+      await prefixSlowmode(message, args);
+      break;
+    case "userinfo":
+      await prefixUserInfo(message, args);
+      break;
+    case "emoji":
+      await prefixEmoji(message, args);
+      break;
+    default:
+      break;
   }
 });
 
@@ -882,6 +932,503 @@ async function handleUnquarantine(interaction) {
   await interaction.reply({ embeds: [embed] });
 }
 
+// --- Purge User (shared logic) ---------------------------------------------
+
+async function purgeUserMessages(channel, userId, amount, requesterTag) {
+  // Fetch up to 100 recent messages in the channel.
+  const messages = await channel.messages.fetch({ limit: 100 });
+
+  // Filter to only messages from the target user, up to the requested amount.
+  const toDelete = messages
+    .filter((m) => m.author.id === userId)
+    .first(amount);
+
+  if (toDelete.length === 0) {
+    return { deleted: 0, none: true };
+  }
+
+  // Use bulkDelete for 2-100 messages, individual delete for 1.
+  if (toDelete.length === 1) {
+    try {
+      await toDelete[0].delete();
+    } catch {
+      /* ignore */
+    }
+  } else {
+    try {
+      await channel.bulkDelete(toDelete, true);
+    } catch {
+      /* fall back to individual deletes if bulk fails */
+      for (const msg of toDelete) {
+        try {
+          await msg.delete();
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+
+  return { deleted: toDelete.length, none: false };
+}
+
+async function handlePurgeUserSlash(interaction) {
+  const targetUser = interaction.options.getUser("user");
+  const amount = interaction.options.getInteger("amount");
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const result = await purgeUserMessages(
+    interaction.channel,
+    targetUser.id,
+    amount,
+    interaction.user.tag
+  );
+
+  if (result.none) {
+    await interaction.editReply({
+      content: `No recent messages from **${targetUser.tag}** were found in this channel.`,
+    });
+    return;
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor("#006400")
+    .setDescription(
+      `🧹 Purged **${result.deleted}** message${result.deleted === 1 ? "" : "s"} from **${targetUser.tag}** in ${interaction.channel}.`
+    )
+    .setFooter({ text: `Purged by ${interaction.user.tag}` })
+    .setTimestamp();
+
+  await interaction.editReply({ embeds: [embed] });
+}
+
+// --- Prefix command implementations (!u) ----------------------------------
+
+async function prefixPurgeUser(message, args) {
+  // !u purgeuser [user] [amount]
+  if (
+    !message.memberPermissions ||
+    !message.memberPermissions.has(PermissionFlagsBits.ManageMessages)
+  ) {
+    await message.reply("You need the **Manage Messages** permission to use this command.");
+    return;
+  }
+
+  const userArg = args[1];
+  const amountArg = args[2];
+
+  if (!userArg || !amountArg) {
+    await message.reply("Usage: `!u purgeuser @user amount`");
+    return;
+  }
+
+  // Parse user from mention or ID.
+  const targetUser = await resolveUserArgument(message, userArg);
+  if (!targetUser) {
+    await message.reply("Could not find that user. Mention them or use their ID.");
+    return;
+  }
+
+  const amount = parseInt(amountArg, 10);
+  if (isNaN(amount) || amount < 1 || amount > 100) {
+    await message.reply("Amount must be a number between **1** and **100**.");
+    return;
+  }
+
+  const result = await purgeUserMessages(message.channel, targetUser.id, amount, message.author.tag);
+
+  if (result.none) {
+    const reply = await message.reply(`No recent messages from **${targetUser.tag}** were found in this channel.`);
+    setTimeout(() => reply.delete().catch(() => {}), 5000);
+    return;
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor("#006400")
+    .setDescription(
+      `🧹 Purged **${result.deleted}** message${result.deleted === 1 ? "" : "s"} from **${targetUser.tag}** in ${message.channel}.`
+    )
+    .setFooter({ text: `Purged by ${message.author.tag}` })
+    .setTimestamp();
+
+  const reply = await message.reply({ embeds: [embed] });
+  setTimeout(() => reply.delete().catch(() => {}), 5000);
+}
+
+async function prefixRole(message, args) {
+  // !u role [user] [role]
+  if (
+    !message.memberPermissions ||
+    !message.memberPermissions.has(ADMIN_PERMISSION)
+  ) {
+    await message.reply("You need the **Administrator** permission to use this command.");
+    return;
+  }
+
+  const userArg = args[1];
+  const roleArg = args.slice(2).join(" ");
+
+  if (!userArg || !roleArg) {
+    await message.reply("Usage: `!u role @user @role`");
+    return;
+  }
+
+  const targetUser = await resolveUserArgument(message, userArg);
+  if (!targetUser) {
+    await message.reply("Could not find that user. Mention them or use their ID.");
+    return;
+  }
+
+  // Parse role from mention or name.
+  const role = resolveRoleArgument(message.guild, roleArg);
+  if (!role) {
+    await message.reply("Could not find that role. Mention it or use its name.");
+    return;
+  }
+
+  const targetMember = await message.guild.members
+    .fetch(targetUser.id)
+    .catch(() => null);
+
+  if (!targetMember) {
+    await message.reply("Could not find that user in this server.");
+    return;
+  }
+
+  const botMember = await message.guild.members.fetchMe();
+
+  if (role.position >= botMember.roles.highest.position) {
+    await message.reply(`I can't manage **${role.name}** because it is at or above my highest role.`);
+    return;
+  }
+
+  if (targetMember.roles.highest.position >= botMember.roles.highest.position) {
+    await message.reply(`I can't modify roles for **${targetUser.tag}** because their highest role is at or above mine.`);
+    return;
+  }
+
+  const hasRole = targetMember.roles.cache.has(role.id);
+
+  try {
+    if (hasRole) {
+      await targetMember.roles.remove(role);
+    } else {
+      await targetMember.roles.add(role);
+    }
+  } catch {
+    await message.reply("I couldn't update that user's roles. Make sure I have the Manage Roles permission and my role is high enough.");
+    return;
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor("#006400")
+    .setDescription(
+      hasRole
+        ? `Removed **${role.name}** from ${targetUser}.`
+        : `Added **${role.name}** to ${targetUser}.`
+    )
+    .setFooter({ text: `Changed by ${message.author.tag}` });
+
+  await message.reply({ embeds: [embed] });
+}
+
+async function prefixSticky(message, args) {
+  // !u sticky [message]
+  if (
+    !message.memberPermissions ||
+    !message.memberPermissions.has(ADMIN_PERMISSION)
+  ) {
+    await message.reply("You need the **Administrator** permission to use this command.");
+    return;
+  }
+
+  const content = args.slice(1).join(" ");
+  if (!content) {
+    await message.reply("Usage: `!u sticky Your sticky message here`");
+    return;
+  }
+
+  const channelId = message.channelId;
+
+  // If there's already a sticky in this channel, delete the old message first.
+  const existing = stickyMessages.get(channelId);
+  if (existing) {
+    try {
+      const oldMessage = await message.channel.messages
+        .fetch(existing.messageId)
+        .catch(() => null);
+      if (oldMessage) await oldMessage.delete().catch(() => {});
+    } catch {
+      /* old message may already be gone */
+    }
+  }
+
+  const stickyText = `📌 __Stickied Message__\n${content}`;
+
+  const sent = await message.channel.send(stickyText);
+
+  stickyMessages.set(channelId, {
+    messageId: sent.id,
+    content,
+  });
+
+  // Delete the command message to keep chat clean.
+  try {
+    await message.delete();
+  } catch {
+    /* ignore */
+  }
+
+  const reply = await message.channel.send("Sticky message has been set for this channel.");
+  setTimeout(() => reply.delete().catch(() => {}), 5000);
+}
+
+async function prefixUnsticky(message) {
+  // !u unsticky
+  if (
+    !message.memberPermissions ||
+    !message.memberPermissions.has(ADMIN_PERMISSION)
+  ) {
+    await message.reply("You need the **Administrator** permission to use this command.");
+    return;
+  }
+
+  const channelId = message.channelId;
+  const sticky = stickyMessages.get(channelId);
+
+  if (!sticky) {
+    await message.reply("There is no sticky message in this channel.");
+    return;
+  }
+
+  try {
+    const oldMessage = await message.channel.messages
+      .fetch(sticky.messageId)
+      .catch(() => null);
+    if (oldMessage) await oldMessage.delete().catch(() => {});
+  } catch {
+    /* old message may already be gone */
+  }
+
+  stickyMessages.delete(channelId);
+
+  try {
+    await message.delete();
+  } catch {
+    /* ignore */
+  }
+
+  const reply = await message.channel.send("Sticky message has been removed from this channel.");
+  setTimeout(() => reply.delete().catch(() => {}), 5000);
+}
+
+async function prefixSlowmode(message, args) {
+  // !u slowmode [seconds]
+  if (
+    !message.memberPermissions ||
+    !message.memberPermissions.has(ADMIN_PERMISSION)
+  ) {
+    await message.reply("You need the **Administrator** permission to use this command.");
+    return;
+  }
+
+  const secondsArg = args[1];
+  if (!secondsArg) {
+    await message.reply("Usage: `!u slowmode <seconds>` (0 to disable)");
+    return;
+  }
+
+  const seconds = parseInt(secondsArg, 10);
+  if (isNaN(seconds) || seconds < 0 || seconds > 21600) {
+    await message.reply("Seconds must be a number between **0** and **21600** (6 hours).");
+    return;
+  }
+
+  try {
+    await message.channel.setRateLimitPerUser(seconds);
+  } catch {
+    await message.reply("I couldn't change the slowmode for this channel. Make sure I have the Manage Channels permission.");
+    return;
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor("#006400")
+    .setDescription(
+      seconds === 0
+        ? "Slowmode has been **disabled** for this channel."
+        : `Slowmode set to **${seconds} second${seconds === 1 ? "" : "s"}** for this channel.`
+    )
+    .setFooter({ text: `Changed by ${message.author.tag}` });
+
+  await message.reply({ embeds: [embed] });
+}
+
+async function prefixUserInfo(message, args) {
+  // !u userinfo [user]
+  const userArg = args[1];
+  let targetUser;
+
+  if (userArg) {
+    targetUser = await resolveUserArgument(message, userArg);
+    if (!targetUser) {
+      await message.reply("Could not find that user. Mention them or use their ID.");
+      return;
+    }
+  } else {
+    targetUser = message.author;
+  }
+
+  // Fetch the guild member for server-specific info (join date, roles).
+  let member = null;
+  if (message.guild) {
+    member = await message.guild.members
+      .fetch(targetUser.id)
+      .catch(() => null);
+  }
+
+  const createdTimestamp = Math.floor(targetUser.createdTimestamp / 1000);
+  const avatarUrl = targetUser.displayAvatarURL({ size: 4096, extension: "png" });
+
+  const embed = new EmbedBuilder()
+    .setColor("#006400")
+    .setTitle(`${targetUser.tag}`)
+    .setThumbnail(avatarUrl)
+    .addFields(
+      { name: "User ID", value: `\`${targetUser.id}\``, inline: true },
+      { name: "Username", value: targetUser.username, inline: true },
+      {
+        name: "Account Created",
+        value: `<t:${createdTimestamp}:F> (<t:${createdTimestamp}:R>)`,
+        inline: false,
+      }
+    )
+    .setFooter({ text: `Requested by ${message.author.tag}` });
+
+  if (member) {
+    const joinedTimestamp = Math.floor(member.joinedTimestamp / 1000);
+    const roles = member.roles.cache
+      .filter((r) => r.id !== message.guild.id)
+      .map((r) => `<@&${r.id}>`)
+      .join(", ");
+    embed.addFields(
+      {
+        name: "Server Join Date",
+        value: `<t:${joinedTimestamp}:F> (<t:${joinedTimestamp}:R>)`,
+        inline: false,
+      },
+      {
+        name: `Roles [${member.roles.cache.size - 1}]`,
+        value: roles || "None",
+        inline: false,
+      }
+    );
+  } else {
+    embed.addFields({
+      name: "Server Join Date",
+      value: "Not a member of this server.",
+      inline: false,
+    });
+  }
+
+  await message.reply({ embeds: [embed] });
+}
+
+async function prefixEmoji(message, args) {
+  // !u emoji [image attachment] [name]
+  if (
+    !message.memberPermissions ||
+    !message.memberPermissions.has(PermissionFlagsBits.ManageGuildExpressions)
+  ) {
+    await message.reply("You need the **Manage Expressions** permission to use this command.");
+    return;
+  }
+
+  const name = args[1];
+
+  if (!name) {
+    await message.reply("Usage: `!u emoji <name>` (attach an image to your message)");
+    return;
+  }
+
+  // Discord emoji names: 2-32 chars, alphanumeric + underscores, must start with a letter or number.
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_]{1,31}$/.test(name)) {
+    await message.reply(
+      "Invalid emoji name. Use **2-32** characters: letters, numbers, and underscores. Must start with a letter or number."
+    );
+    return;
+  }
+
+  // Check for an attached image.
+  const attachment = message.attachments.first();
+  if (!attachment) {
+    await message.reply("Please attach an image to your message to use as the emoji.");
+    return;
+  }
+
+  // Validate it's an image.
+  const validTypes = [
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+  ];
+  if (!validTypes.includes(attachment.contentType)) {
+    await message.reply(
+      "The attached file must be an image (PNG, JPEG, GIF, or WebP)."
+    );
+    return;
+  }
+
+  // Discord emoji image must be under 256 KB.
+  if (attachment.size > 256 * 1024) {
+    await message.reply(
+      "The image is too large. Discord emoji images must be under **256 KB**."
+    );
+    return;
+  }
+
+  try {
+    const response = await fetch(attachment.url);
+    if (!response.ok) {
+      await message.reply("Could not download the attached image. Please try again.");
+      return;
+    }
+    const buffer = await response.arrayBuffer();
+    const base64 = Buffer.from(buffer).toString("base64");
+    const dataUri = `data:${attachment.contentType};base64,${base64}`;
+
+    const createdEmoji = await message.guild.emojis.create({
+      name,
+      attachment: dataUri,
+    });
+
+    const embed = new EmbedBuilder()
+      .setColor("#006400")
+      .setTitle("✅ Emoji Added")
+      .setDescription(`Emoji **\`${createdEmoji.name}\`** has been added to this server.`)
+      .setThumbnail(createdEmoji.imageURL())
+      .setFooter({ text: `Added by ${message.author.tag}` })
+      .setTimestamp();
+
+    await message.reply({ embeds: [embed] });
+  } catch (error) {
+    // Handle Discord API errors with specific messages.
+    const errCode = error?.code;
+    let errMsg = "Could not create the emoji. Please try again.";
+
+    if (errCode === 50035 || errCode === 30018) {
+      errMsg = "The server has reached its emoji limit, or the image is invalid.";
+    } else if (errCode === 50013) {
+      errMsg = "I don't have permission to manage emojis. Make sure I have the Manage Expressions permission.";
+    } else if (errCode === 50138) {
+      errMsg = "The emoji name is invalid or already in use.";
+    }
+
+    await message.reply(errMsg);
+  }
+}
+
 // --- Helpers ---------------------------------------------------------------
 
 async function requireAdmin(interaction, fn) {
@@ -891,6 +1438,17 @@ async function requireAdmin(interaction, fn) {
   if (!interaction.memberPermissions || !interaction.memberPermissions.has(ADMIN_PERMISSION)) {
     await interaction.reply({
       content: "You need the Administrator permission to use this command.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  await fn();
+}
+
+async function requirePermission(interaction, permissionFlag, permissionName, fn) {
+  if (!interaction.memberPermissions || !interaction.memberPermissions.has(permissionFlag)) {
+    await interaction.reply({
+      content: `You need the **${permissionName}** permission to use this command.`,
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -977,6 +1535,51 @@ async function resolveDisplayName(interaction, user) {
     if (member) return member.displayName;
   }
   return user.globalName ?? user.tag;
+}
+
+// Resolves a user from a mention string (<@id>, <@!id>) or a raw user ID.
+async function resolveUserArgument(message, arg) {
+  const mentionMatch = arg.match(/^<@!?(\d+)>$/);
+  if (mentionMatch) {
+    try {
+      return await client.users.fetch(mentionMatch[1]);
+    } catch {
+      return null;
+    }
+  }
+
+  // Try as a raw ID.
+  if (/^\d{17,20}$/.test(arg)) {
+    try {
+      return await client.users.fetch(arg);
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+// Resolves a role from a mention (<@&id>) or by name.
+function resolveRoleArgument(guild, arg) {
+  // Role mention: <@&role_id>
+  const mentionMatch = arg.match(/^<@&(\d+)>$/);
+  if (mentionMatch) {
+    return guild.roles.cache.get(mentionMatch[1]) || null;
+  }
+
+  // Try by name (case-insensitive).
+  const byName = guild.roles.cache.find(
+    (r) => r.name.toLowerCase() === arg.toLowerCase()
+  );
+  if (byName) return byName;
+
+  // Try as a raw ID.
+  if (/^\d{17,20}$/.test(arg)) {
+    return guild.roles.cache.get(arg) || null;
+  }
+
+  return null;
 }
 
 client.login(token);

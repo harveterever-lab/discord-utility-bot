@@ -212,6 +212,27 @@ const commandDefinitions = [
         .setRequired(true)
     )
     .toJSON(),
+
+  // --- purgeuser slash command ---
+  new SlashCommandBuilder()
+    .setName("purgeuser")
+    .setDescription("Purge recent messages from a specific user in this channel.")
+    .addUserOption((option) =>
+      option
+        .setName("user")
+        .setDescription("The user whose messages should be purged.")
+        .setRequired(true)
+    )
+    .addIntegerOption((option) =>
+      option
+        .setName("amount")
+        .setDescription("Number of recent messages to delete (1-100).")
+        .setRequired(true)
+        .setMinValue(1)
+        .setMaxValue(100)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
+    .toJSON(),
 ];
 
 module.exports = { commandDefinitions };
