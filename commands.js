@@ -233,6 +233,11 @@ const commandDefinitions = [
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
     .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName("info")
+    .setDescription("Show information about the bot.")
+    .toJSON(),
 ];
 
 module.exports = { commandDefinitions };
