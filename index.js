@@ -8,8 +8,12 @@ const {
   ButtonBuilder,
   ButtonStyle,
   ActionRowBuilder,
+  REST,
+  Routes,
 } = require("discord.js");
 require("dotenv").config();
+
+const { commandDefinitions } = require("./commands");
 
 const token = process.env.DISCORD_TOKEN;
 if (!token) {
@@ -33,8 +37,23 @@ const client = new Client({
   ],
 });
 
-client.once(Events.ClientReady, (readyClient) => {
+client.once(Events.ClientReady, async (readyClient) => {
   console.log(`Ready! Logged in as ${readyClient.user.tag}`);
+
+  // Auto-register slash commands so they appear in Discord without a manual
+  // deploy step. Uses the bot application's own ID (the logged-in user).
+  const clientId = readyClient.user.id;
+  const rest = new REST({ version: "10" }).setToken(token);
+
+  try {
+    console.log("Registering application (/) commands…");
+    const data = await rest.put(Routes.applicationCommands(clientId), {
+      body: commandDefinitions,
+    });
+    console.log(`Successfully registered ${data.length} application (/) commands.`);
+  } catch (error) {
+    console.error("Failed to register application commands:", error);
+  }
 });
 
 // --- Slash command handler -------------------------------------------------

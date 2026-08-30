@@ -1,9 +1,14 @@
-// One-time slash command registration script.
+// Manual slash command registration script.
 // Run with: npm run deploy
-// Re-run whenever you change command definitions below.
+// Re-run whenever you change command definitions in commands.js.
+//
+// NOTE: index.js also auto-registers commands on startup, so this script is
+// only needed if you want to refresh commands without (re)starting the bot.
 
-const { REST, Routes, SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
+const { REST, Routes } = require("discord.js");
 require("dotenv").config();
+
+const { commandDefinitions } = require("./commands");
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.CLIENT_ID;
@@ -19,118 +24,16 @@ if (!clientId) {
   process.exit(1);
 }
 
-const commands = [
-  new SlashCommandBuilder()
-    .setName("afk")
-    .setDescription("Set yourself as Away From Keyboard.")
-    .addStringOption((option) =>
-      option
-        .setName("reason")
-        .setDescription("Why are you going AFK?")
-        .setRequired(false)
-    )
-    .toJSON(),
-
-  // Administrator-only commands: default permissions make them invisible
-  // and unusable to non-admins. They are re-checked in the interaction handler.
-  new SlashCommandBuilder()
-    .setName("say")
-    .setDescription("Make the bot send a message in this channel.")
-    .addStringOption((option) =>
-      option
-        .setName("message")
-        .setDescription("The message the bot should send.")
-        .setRequired(true)
-    )
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-    .toJSON(),
-
-  new SlashCommandBuilder()
-    .setName("embed")
-    .setDescription("Make the bot send a rich embed.")
-    .addStringOption((option) =>
-      option
-        .setName("description")
-        .setDescription("The embed description (main text).")
-        .setRequired(true)
-    )
-    .addStringOption((option) =>
-      option
-        .setName("embed_color")
-        .setDescription("A HEX color, e.g. #006400 or 006400.")
-        .setRequired(false)
-    )
-    .addStringOption((option) =>
-      option
-        .setName("image")
-        .setDescription("Image URL to display in the embed.")
-        .setRequired(false)
-    )
-    .addStringOption((option) =>
-      option
-        .setName("footer")
-        .setDescription("Footer text for the embed.")
-        .setRequired(false)
-    )
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-    .toJSON(),
-
-  new SlashCommandBuilder()
-    .setName("react")
-    .setDescription("Add emoji reactions to a message by its ID.")
-    .addStringOption((option) =>
-      option
-        .setName("message_id")
-        .setDescription("The ID of the message to react to.")
-        .setRequired(true)
-    )
-    .addStringOption((option) =>
-      option
-        .setName("emojis")
-        .setDescription(
-          "Emojis separated by spaces, e.g. 👍 ❤️ :custom: :anim~1:"
-        )
-        .setRequired(true)
-    )
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-    .toJSON(),
-
-  new SlashCommandBuilder()
-    .setName("avatar")
-    .setDescription("Show a user's Discord avatar in an embed.")
-    .addUserOption((option) =>
-      option
-        .setName("user")
-        .setDescription("Whose avatar to show (defaults to you).")
-        .setRequired(false)
-    )
-    .toJSON(),
-
-  new SlashCommandBuilder()
-    .setName("banner")
-    .setDescription("Show a user's Discord banner in an embed.")
-    .addUserOption((option) =>
-      option
-        .setName("user")
-        .setDescription("Whose banner to show (defaults to you).")
-        .setRequired(false)
-    )
-    .toJSON(),
-];
-
 const rest = new REST({ version: "10" }).setToken(token);
 
 (async () => {
   try {
     console.log(
-      `Started refreshing ${commands.length} application (/) commands.`
+      `Started refreshing ${commandDefinitions.length} application (/) commands.`
     );
 
-    // Global commands are available across all guilds. They can take up to an
-    // hour to cache. For instant testing, swap Routes.applicationCommands
-    // for Routes.applicationGuildCommands(clientId, guildId).
     const data = await rest.put(Routes.applicationCommands(clientId), {
-      body: commands,
+      body: commandDefinitions,
     });
 
     console.log(
@@ -138,9 +41,6 @@ const rest = new REST({ version: "10" }).setToken(token);
     );
     console.log(
       "Note: global commands may take up to 1 hour to appear in all guilds."
-    );
-    console.log(
-      "For instant local testing, use applicationGuildCommands instead."
     );
   } catch (error) {
     console.error(error);
