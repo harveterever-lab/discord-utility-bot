@@ -94,6 +94,28 @@ const commands = [
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName("avatar")
+    .setDescription("Show a user's Discord avatar in an embed.")
+    .addUserOption((option) =>
+      option
+        .setName("user")
+        .setDescription("Whose avatar to show (defaults to you).")
+        .setRequired(false)
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName("banner")
+    .setDescription("Show a user's Discord banner in an embed.")
+    .addUserOption((option) =>
+      option
+        .setName("user")
+        .setDescription("Whose banner to show (defaults to you).")
+        .setRequired(false)
+    )
+    .toJSON(),
 ];
 
 const rest = new REST({ version: "10" }).setToken(token);

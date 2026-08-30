@@ -5,6 +5,9 @@ const {
   Events,
   PermissionFlagsBits,
   MessageFlags,
+  ButtonBuilder,
+  ButtonStyle,
+  ActionRowBuilder,
 } = require("discord.js");
 require("dotenv").config();
 
@@ -55,6 +58,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
     case "react": {
       await requireAdmin(interaction, () => handleReact(interaction));
+      break;
+    }
+    case "avatar": {
+      await handleAvatar(interaction);
+      break;
+    }
+    case "banner": {
+      await handleBanner(interaction);
       break;
     }
     default:
@@ -242,6 +253,75 @@ async function handleReact(interaction) {
   });
 }
 
+async function handleAvatar(interaction) {
+  // Defaults to the user who ran the command if no user is provided.
+  const user = interaction.options.getUser("user") ?? interaction.user;
+
+  // user.displayAvatarURL returns the highest-quality avatar available for
+  // the user (guild avatar if set, otherwise global). size=4096 is the max.
+  const avatarUrl = user.displayAvatarURL({ size: 4096, extension: "png" });
+  const displayName = await resolveDisplayName(interaction, user);
+
+  const embed = new EmbedBuilder()
+    .setColor("#006400")
+    .setTitle(`${displayName}'s Avatar`)
+    .setImage(avatarUrl)
+    .setFooter({ text: `Requested by ${interaction.user.tag}` });
+
+  const downloadButton = new ButtonBuilder()
+    .setLabel("Download Avatar")
+    .setStyle(ButtonStyle.Link)
+    .setURL(avatarUrl);
+
+  const row = new ActionRowBuilder().addComponents(downloadButton);
+
+  await interaction.reply({ embeds: [embed], components: [row] });
+}
+
+async function handleBanner(interaction) {
+  // Defaults to the user who ran the command if no user is provided.
+  const user = interaction.options.getUser("user") ?? interaction.user;
+
+  // Banners are only exposed on the full User profile, not on the member or
+  // the partial User from options. fetch() forces a fresh REST fetch.
+  let fullUser;
+  try {
+    fullUser = await client.users.fetch(user.id, { force: true });
+  } catch {
+    await interaction.reply({
+      content: "Could not fetch that user's profile. Please try again.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const bannerUrl = fullUser.bannerURL({ size: 4096, extension: "png" });
+  const displayName = await resolveDisplayName(interaction, user);
+
+  if (!bannerUrl) {
+    await interaction.reply({
+      content: `**${displayName}** does not have a banner set.`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor("#006400")
+    .setTitle(`${displayName}'s Banner`)
+    .setImage(bannerUrl)
+    .setFooter({ text: `Requested by ${interaction.user.tag}` });
+
+  const downloadButton = new ButtonBuilder()
+    .setLabel("Download Banner")
+    .setStyle(ButtonStyle.Link)
+    .setURL(bannerUrl);
+
+  const row = new ActionRowBuilder().addComponents(downloadButton);
+
+  await interaction.reply({ embeds: [embed], components: [row] });
+}
+
 // --- Helpers ---------------------------------------------------------------
 
 async function requireAdmin(interaction, fn) {
@@ -293,6 +373,18 @@ function formatDuration(ms) {
   if (hours < 24) return `${hours}h`;
   const days = Math.floor(hours / 24);
   return `${days}d`;
+}
+
+// Resolves a display name for a user, preferring the guild nickname if the
+// user is a member of this server. Falls back to the user's global tag/name.
+async function resolveDisplayName(interaction, user) {
+  if (interaction.guild) {
+    const member = await interaction.guild.members
+      .fetch(user.id)
+      .catch(() => null);
+    if (member) return member.displayName;
+  }
+  return user.globalName ?? user.tag;
 }
 
 client.login(token);

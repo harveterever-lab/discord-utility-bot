@@ -1,6 +1,6 @@
 # Discord Utility Bot
 
-A lightweight [Discord.js](https://discord.js.org/) v14 bot with four slash commands. AFK data is kept in memory only — no database required.
+A lightweight [Discord.js](https://discord.js.org/) v14 bot with six slash commands. AFK data is kept in memory only — no database required.
 
 ## Commands
 
@@ -10,6 +10,8 @@ A lightweight [Discord.js](https://discord.js.org/) v14 bot with four slash comm
 | `/say [message]` | Administrator | The bot sends the provided message in the channel. |
 | `/embed [description] [embed_color] [image] [footer]` | Administrator | The bot sends a rich embed. `description` is required; the rest are optional. Default color is dark green `#006400`. Hex colors are validated. |
 | `/react [message_id] [emojis]` | Administrator | Adds the given emojis (separated by spaces) to the specified message. Supports Unicode, custom (`:name:id`), and animated (`a:name:id`) emojis. |
+| `/avatar [user]` | Everyone | Shows the selected user's Discord avatar in an embed at the highest available quality, with a Download Avatar button. Defaults to your own avatar if no user is given. |
+| `/banner [user]` | Everyone | Shows the selected user's Discord banner in an embed at the highest available quality, with a Download Banner button. Defaults to your own banner if no user is given. Shows a clear message if the user has no banner. |
 
 Administrator-only commands are hidden from and unusable by non-admins via Discord's default member permissions, and are re-checked server-side.
 
