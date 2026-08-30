@@ -1,0 +1,17 @@
+{
+  "name": "discord-utility-bot",
+  "version": "1.0.0",
+  "description": "A lightweight Discord.js v14 bot with AFK, say, embed, and react slash commands.",
+  "main": "index.js",
+  "type": "commonjs",
+  "private": true,
+  "scripts": {
+    "start": "node index.js",
+    "deploy": "node deploy-commands.js",
+    "test": "node --check index.js && node --check deploy-commands.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.27.0",
+    "dotenv": "^17.2.1"
+  }
+}
