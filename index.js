@@ -33,15 +33,16 @@ const stickyMessages = new Map();
 // Map<guildId, roleId>
 const staffRoles = new Map();
 
-// --- Quarantined role store (in-memory only; resets on restart) --------------
-// Map<guildId, roleId>
-const quarantinedRoles = new Map();
+// --- Quarantine log channel store (in-memory only; resets on restart) --------
+// Map<guildId, channelId>
+const logChannels = new Map();
 
 // --- Quarantine store (in-memory only; resets on restart) ------------------
 // Map<guildId, Map<userId, string[]>>  (guild -> user -> saved role IDs)
 const quarantineStore = new Map();
 
 const ADMIN_PERMISSION = PermissionFlagsBits.Administrator;
+const MANAGE_ROLES_PERMISSION = PermissionFlagsBits.ManageRoles;
 
 // --- Bot client ------------------------------------------------------------
 const client = new Client({
@@ -139,15 +140,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await requireStaff(interaction, () => handleUnquarantine(interaction));
       break;
     }
-    case "purgeuser": {
-      await requirePermission(
-        interaction,
-        PermissionFlagsBits.ManageMessages,
-        "Manage Messages",
-        () => handlePurgeUserSlash(interaction)
-      );
-      break;
-    }
     default:
       break;
   }
@@ -232,36 +224,14 @@ client.on(Events.MessageCreate, async (message) => {
   }
 });
 
-// --- Prefix command handler (!u) -------------------------------------------
+// --- !u create: role creation prefix command ------------------------------
+// Parses "!u create [name] [type] [color] [color2?]" with an optional image
+// attachment used as the role icon. Requires Administrator or Manage Roles.
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot || !message.guild) return;
+  if (!message.content.startsWith("!u create")) return;
 
-  const content = message.content;
-
-  // Only respond to the "!u" prefix.
-  if (!content.startsWith("!u ")) return;
-
-  const args = content.slice(3).trim().split(/\s+/);
-  const subcommand = args[0]?.toLowerCase();
-
-  if (!subcommand) return;
-
-  switch (subcommand) {
-    case "emoji":
-      await prefixEmoji(message, args);
-      break;
-    case "create":
-      await prefixCreate(message, args);
-      break;
-    case "set":
-      await prefixSet(message, args);
-      break;
-    case "move":
-      await prefixMove(message, args);
-      break;
-    default:
-      break;
-  }
+  await handleUCreate(message);
 });
 
 // --- Command implementations ----------------------------------------------
@@ -712,15 +682,35 @@ async function handleRole(interaction) {
 
 async function handleStaff(interaction) {
   const role = interaction.options.getRole("role");
-  const quarantinedRole = interaction.options.getRole("quarantined_role");
+  const logChannel = interaction.options.getChannel("log_channel");
   const guildId = interaction.guildId;
 
   staffRoles.set(guildId, role.id);
-  quarantinedRoles.set(guildId, quarantinedRole.id);
+
+  let content = `The staff role has been set to **${role.name}**.`;
+
+  if (logChannel) {
+    logChannels.set(guildId, logChannel.id);
+    content += ` The quarantine log channel has been set to **${logChannel.name}**.`;
+  }
 
   await interaction.reply({
-    content: `The staff role has been set to **${role.name}** and the quarantined role has been set to **${quarantinedRole.name}**.`,
+    content,
     flags: MessageFlags.Ephemeral,
+  });
+}
+
+async function getOrCreateQuarantineRole(guild) {
+  const existing = guild.roles.cache.find(
+    (r) => r.name === "Quarantined"
+  );
+  if (existing) return existing;
+
+  return guild.roles.create({
+    name: "Quarantined",
+    color: 0x006400,
+    permissions: [],
+    reason: "Quarantine role created by bot",
   });
 }
 
@@ -741,35 +731,36 @@ async function handleQuarantine(interaction) {
     return;
   }
 
-  const quarantinedRoleId = quarantinedRoles.get(guild.id);
-  if (!quarantinedRoleId) {
-    await interaction.reply({
-      content:
-        "No quarantined role has been set for this server. An administrator can set one with /staff.",
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-
-  const quarantineRole = guild.roles.cache.get(quarantinedRoleId);
-  if (!quarantineRole) {
-    await interaction.reply({
-      content:
-        "The configured quarantined role no longer exists. An administrator can set a new one with /staff.",
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-
   const botMember = await guild.members.fetchMe();
+
+  let quarantineRole;
+  try {
+    quarantineRole = await getOrCreateQuarantineRole(guild);
+  } catch {
+    await interaction.reply({
+      content:
+        "I couldn't create or fetch the Quarantined role. Make sure I have the Manage Roles permission.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
 
   if (quarantineRole.position >= botMember.roles.highest.position) {
     await interaction.reply({
       content:
-        "The quarantined role is at or above my highest role. Move my role above it in the server settings.",
+        "The Quarantined role is at or above my highest role. Move my role above it in the server settings.",
       flags: MessageFlags.Ephemeral,
     });
     return;
+  }
+
+  // Deny View Channel for the Quarantined role in every text channel.
+  for (const [, channel] of guild.channels.cache) {
+    if (channel.manageable) {
+      await channel.permissionOverwrites
+        .edit(quarantineRole, { ViewChannel: false })
+        .catch(() => {});
+    }
   }
 
   // Save the user's manageable roles, then remove them.
@@ -796,7 +787,7 @@ async function handleQuarantine(interaction) {
   } catch {
     await interaction.reply({
       content:
-        "I couldn't assign the quarantined role. Make sure I have the Manage Roles permission and my role is high enough.",
+        "I couldn't assign the Quarantined role. Make sure I have the Manage Roles permission and my role is high enough.",
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -819,15 +810,34 @@ async function handleQuarantine(interaction) {
 
   const embed = new EmbedBuilder()
     .setColor("#006400")
-    .setTitle("🔒 Quarantine Log")
-    .addFields(
-      { name: "User", value: `${targetUser} (\`${targetUser.id}\`)`, inline: false },
-      { name: "Moderator", value: `${interaction.user}`, inline: false },
-      { name: "Reason", value: reason, inline: false }
+    .setDescription(
+      `**${targetUser.tag}** has been quarantined.\nReason: ${reason}`
     )
-    .setTimestamp();
+    .setFooter({ text: `Quarantined by ${interaction.user.tag}` });
 
   await interaction.reply({ embeds: [embed] });
+
+  // Send a log embed to the configured log channel, if set.
+  const logChannelId = logChannels.get(guild.id);
+  if (logChannelId) {
+    const logChannel = guild.channels.cache.get(logChannelId);
+    if (logChannel) {
+      const logEmbed = new EmbedBuilder()
+        .setColor("#006400")
+        .setTitle("🔒 Quarantine Log")
+        .addFields(
+          { name: "User", value: `${targetUser} (\`${targetUser.id}\`)`, inline: false },
+          { name: "Moderator", value: `${interaction.user}`, inline: false },
+          { name: "Reason", value: reason, inline: false }
+        )
+        .setTimestamp();
+      try {
+        await logChannel.send({ embeds: [logEmbed] });
+      } catch {
+        /* log channel may not be sendable — ignore */
+      }
+    }
+  }
 }
 
 async function handleUnquarantine(interaction) {
@@ -846,17 +856,9 @@ async function handleUnquarantine(interaction) {
     return;
   }
 
-  const quarantinedRoleId = quarantinedRoles.get(guild.id);
-  if (!quarantinedRoleId) {
-    await interaction.reply({
-      content:
-        "No quarantined role has been set for this server. An administrator can set one with /staff.",
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-
-  const quarantineRole = guild.roles.cache.get(quarantinedRoleId);
+  const quarantineRole = guild.roles.cache.find(
+    (r) => r.name === "Quarantined"
+  );
 
   if (!quarantineRole || !targetMember.roles.cache.has(quarantineRole.id)) {
     await interaction.reply({
@@ -871,19 +873,19 @@ async function handleUnquarantine(interaction) {
   if (quarantineRole.position >= botMember.roles.highest.position) {
     await interaction.reply({
       content:
-        "The quarantined role is at or above my highest role. Move my role above it in the server settings.",
+        "The Quarantined role is at or above my highest role. Move my role above it in the server settings.",
       flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
-  // Remove the quarantined role.
+  // Remove the Quarantined role.
   try {
     await targetMember.roles.remove(quarantineRole);
   } catch {
     await interaction.reply({
       content:
-        "I couldn't remove the quarantined role. Make sure I have the Manage Roles permission and my role is high enough.",
+        "I couldn't remove the Quarantined role. Make sure I have the Manage Roles permission and my role is high enough.",
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -913,494 +915,239 @@ async function handleUnquarantine(interaction) {
 
   const embed = new EmbedBuilder()
     .setColor("#006400")
-    .setTitle("🔓 Unquarantine Log")
-    .addFields(
-      { name: "User", value: `${targetUser} (\`${targetUser.id}\`)`, inline: false },
-      { name: "Moderator", value: `${interaction.user}`, inline: false }
-    )
-    .setTimestamp();
+    .setDescription(`**${targetUser.tag}** has been removed from quarantine.`)
+    .setFooter({ text: `Unquarantined by ${interaction.user.tag}` });
 
   await interaction.reply({ embeds: [embed] });
-}
 
-// --- Purge User (shared logic) ---------------------------------------------
-
-async function purgeUserMessages(channel, userId, amount, requesterTag) {
-  // Fetch up to 100 recent messages in the channel.
-  const messages = await channel.messages.fetch({ limit: 100 });
-
-  // Filter to only messages from the target user, up to the requested amount.
-  const toDelete = messages
-    .filter((m) => m.author.id === userId)
-    .first(amount);
-
-  if (toDelete.length === 0) {
-    return { deleted: 0, none: true };
-  }
-
-  // Use bulkDelete for 2-100 messages, individual delete for 1.
-  if (toDelete.length === 1) {
-    try {
-      await toDelete[0].delete();
-    } catch {
-      /* ignore */
-    }
-  } else {
-    try {
-      await channel.bulkDelete(toDelete, true);
-    } catch {
-      /* fall back to individual deletes if bulk fails */
-      for (const msg of toDelete) {
-        try {
-          await msg.delete();
-        } catch {
-          /* ignore */
-        }
+  // Send a log embed to the configured log channel, if set.
+  const logChannelId = logChannels.get(guild.id);
+  if (logChannelId) {
+    const logChannel = guild.channels.cache.get(logChannelId);
+    if (logChannel) {
+      const logEmbed = new EmbedBuilder()
+        .setColor("#006400")
+        .setTitle("🔓 Unquarantine Log")
+        .addFields(
+          { name: "User", value: `${targetUser} (\`${targetUser.id}\`)`, inline: false },
+          { name: "Moderator", value: `${interaction.user}`, inline: false }
+        )
+        .setTimestamp();
+      try {
+        await logChannel.send({ embeds: [logEmbed] });
+      } catch {
+        /* log channel may not be sendable — ignore */
       }
     }
   }
-
-  return { deleted: toDelete.length, none: false };
 }
 
-async function handlePurgeUserSlash(interaction) {
-  const targetUser = interaction.options.getUser("user");
-  const amount = interaction.options.getInteger("amount");
+// --- !u create handler ----------------------------------------------------
 
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+async function handleUCreate(message) {
+  const member = message.member;
+  if (!member) return;
 
-  const result = await purgeUserMessages(
-    interaction.channel,
-    targetUser.id,
-    amount,
-    interaction.user.tag
-  );
-
-  if (result.none) {
-    await interaction.editReply({
-      content: `No recent messages from **${targetUser.tag}** were found in this channel.`,
-    });
-    return;
-  }
-
-  const embed = new EmbedBuilder()
-    .setColor("#006400")
-    .setDescription(
-      `🧹 Purged **${result.deleted}** message${result.deleted === 1 ? "" : "s"} from **${targetUser.tag}** in ${interaction.channel}.`
-    )
-    .setFooter({ text: `Purged by ${interaction.user.tag}` })
-    .setTimestamp();
-
-  await interaction.editReply({ embeds: [embed] });
-}
-
-// --- Prefix command implementations (!u) ----------------------------------
-
-async function prefixEmoji(message, args) {
-  // !u emoji [image attachment] [name]
-  const isOwner = message.guild.ownerId === message.author.id;
   const hasPermission =
-    message.member?.permissions?.has(PermissionFlagsBits.ManageGuildExpressions) ?? false;
+    member.permissions.has(ADMIN_PERMISSION) ||
+    member.permissions.has(MANAGE_ROLES_PERMISSION);
 
-  if (!isOwner && !hasPermission) {
-    await message.reply("You need the **Manage Expressions** permission to use this command.");
-    return;
-  }
-
-  const name = args[1];
-
-  if (!name) {
-    await message.reply("Usage: `!u emoji <name>` (attach an image to your message)");
-    return;
-  }
-
-  // Discord emoji names: 2-32 chars, alphanumeric + underscores, must start with a letter or number.
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9_]{1,31}$/.test(name)) {
+  if (!hasPermission) {
     await message.reply(
-      "Invalid emoji name. Use **2-32** characters: letters, numbers, and underscores. Must start with a letter or number."
+      "You need **Administrator** or **Manage Roles** permission to use this command."
     );
     return;
   }
 
-  // Check for an attached image.
-  const attachment = message.attachments.first();
-  if (!attachment) {
-    await message.reply("Please attach an image to your message to use as the emoji.");
-    return;
-  }
+  // Parse: !u create [name] [type] [color1] [color2?]
+  const args = message.content.trim().split(/\s+/);
 
-  // Validate it's an image.
-  const validTypes = [
-    "image/png",
-    "image/jpeg",
-    "image/gif",
-    "image/webp",
-  ];
-  if (!validTypes.includes(attachment.contentType)) {
+  // args[0] = "!u", args[1] = "create"
+  if (args.length < 5) {
     await message.reply(
-      "The attached file must be an image (PNG, JPEG, GIF, or WebP)."
+      "Usage: `!u create [name] [type] [color]` or `!u create [name] gradient [color1] [color2]`\n" +
+      "Type must be `color` or `gradient`. Colors must be valid HEX codes."
     );
     return;
   }
 
-  // Discord emoji image must be under 256 KB.
-  if (attachment.size > 256 * 1024) {
-    await message.reply(
-      "The image is too large. Discord emoji images must be under **256 KB**."
-    );
-    return;
-  }
-
-  try {
-    const response = await fetch(attachment.url);
-    if (!response.ok) {
-      await message.reply("Could not download the attached image. Please try again.");
-      return;
-    }
-    const buffer = await response.arrayBuffer();
-    const base64 = Buffer.from(buffer).toString("base64");
-    const dataUri = `data:${attachment.contentType};base64,${base64}`;
-
-    const createdEmoji = await message.guild.emojis.create({
-      name,
-      attachment: dataUri,
-    });
-
-    const embed = new EmbedBuilder()
-      .setColor("#006400")
-      .setTitle("✅ Emoji Added")
-      .setDescription(`Emoji **\`${createdEmoji.name}\`** has been added to this server.`)
-      .setThumbnail(createdEmoji.imageURL())
-      .setFooter({ text: `Added by ${message.author.tag}` })
-      .setTimestamp();
-
-    await message.reply({ embeds: [embed] });
-  } catch (error) {
-    // Handle Discord API errors with specific messages.
-    const errCode = error?.code;
-    let errMsg = "Could not create the emoji. Please try again.";
-
-    if (errCode === 50035 || errCode === 30018) {
-      errMsg = "The server has reached its emoji limit, or the image is invalid.";
-    } else if (errCode === 50013) {
-      errMsg = "I don't have permission to manage emojis. Make sure I have the Manage Expressions permission.";
-    } else if (errCode === 50138) {
-      errMsg = "The emoji name is invalid or already in use.";
-    }
-
-    await message.reply(errMsg);
-  }
-}
-
-// --- Prefix role management commands (!u) ---------------------------------
-
-async function prefixCreate(message, args) {
-  // !u create [name] [type] [color/gradient]
-  // type: "color" or "gradient"
-  // color: "#HEXCODE"
-  // gradient: "#HEXCODE #HEXCODE"
-  if (
-    !message.memberPermissions ||
-    !message.memberPermissions.has(PermissionFlagsBits.ManageRoles)
-  ) {
-    await message.reply("You need the **Manage Roles** permission to use this command.");
-    return;
-  }
-
-  const name = args[1];
-  const type = (args[2] || "").toLowerCase();
-
-  if (!name || !type) {
-    await message.reply(
-      "Usage: `!u create <name> <color|gradient> <#HEXCODE [#HEXCODE]>`\n" +
-      "Example: `!u create MyRole color #006400`\n" +
-      "Example: `!u create MyRole gradient #006400 #FFD700`"
-    );
-    return;
-  }
+  const name = args[2];
+  const type = args[3].toLowerCase();
 
   if (type !== "color" && type !== "gradient") {
-    await message.reply('Type must be either **"color"** or **"gradient"**.');
+    await message.reply(
+      'Invalid type. Use `color` or `gradient`.\n' +
+      'Example: `!u create Evergreen color #006400`'
+    );
     return;
   }
 
-  if (type === "color") {
-    const colorInput = args[3];
-    if (!colorInput) {
-      await message.reply("Usage: `!u create <name> color <#HEXCODE>`");
+  if (type === "color" && args.length !== 5) {
+    await message.reply(
+      'For `color` type, provide exactly one HEX code.\n' +
+      'Example: `!u create Evergreen color #006400`'
+    );
+    return;
+  }
+
+  if (type === "gradient" && args.length !== 6) {
+    await message.reply(
+      'For `gradient` type, provide exactly two HEX codes.\n' +
+      'Example: `!u create Aurora gradient #006400 #00FF00`'
+    );
+    return;
+  }
+
+  const color1Raw = args[4];
+  const color1 = parseHexColor(color1Raw);
+
+  if (color1 === null) {
+    await message.reply(
+      `Invalid first HEX color: \`${color1Raw}\`. Use a 6-digit hex code, e.g. \`#006400\` or \`006400\`.`
+    );
+    return;
+  }
+
+  let color2 = null;
+  if (type === "gradient") {
+    const color2Raw = args[5];
+    color2 = parseHexColor(color2Raw);
+    if (color2 === null) {
+      await message.reply(
+        `Invalid second HEX color: \`${color2Raw}\`. Use a 6-digit hex code, e.g. \`#00FF00\` or \`00FF00\`.`
+      );
       return;
     }
+  }
 
-    const parsed = parseHexColor(colorInput);
-    if (parsed === null) {
+  // Validate role name length (Discord: 1-100 characters).
+  if (name.length < 1 || name.length > 100) {
+    await message.reply(
+      "Role name must be between 1 and 100 characters."
+    );
+    return;
+  }
+
+  // Check for an attached image to use as the role icon.
+  let iconBuffer = null;
+  if (message.attachments.size > 0) {
+    const attachment = message.attachments.first();
+    const contentType = attachment.contentType || "";
+
+    if (!contentType.startsWith("image/")) {
       await message.reply(
-        `Invalid HEX color: \`${colorInput}\`. Use a 6-digit hex code, e.g. \`#006400\` or \`006400\`.`
+        "The attached file is not an image. Please attach a PNG, JPEG, or GIF image for the role icon."
       );
       return;
     }
 
-    const roleData = { name, color: parsed };
-
-    // Optional: attached image or emoji as role icon.
-    const iconResult = await tryResolveRoleIcon(message);
-    if (iconResult.error) {
-      await message.reply(iconResult.error);
+    // Discord role icons have a 256 KB size limit.
+    const MAX_ICON_SIZE = 256 * 1024;
+    if (attachment.size > MAX_ICON_SIZE) {
+      await message.reply(
+        `The attached image is too large for a role icon. Discord limits role icons to 256 KB. Your image is ${(attachment.size / 1024).toFixed(1)} KB.`
+      );
       return;
     }
-    if (iconResult.icon) {
-      roleData.icon = iconResult.icon;
-    }
 
+    // Download the image.
     try {
-      const created = await message.guild.roles.create(roleData);
-      const embed = new EmbedBuilder()
-        .setColor(parsed)
-        .setTitle("✅ Role Created")
-        .setDescription(
-          `Role **${created.name}** has been created with color \`${parsed}\`.` +
-          (iconResult.icon ? " A role icon was also set." : "")
-        )
-        .setFooter({ text: `Created by ${message.author.tag}` })
-        .setTimestamp();
-      await message.reply({ embeds: [embed] });
-    } catch (error) {
-      await message.reply(formatRoleError(error, "create the role"));
+      const response = await fetch(attachment.url);
+      if (!response.ok) {
+        await message.reply("Failed to download the attached image. Please try again.");
+        return;
+      }
+      iconBuffer = Buffer.from(await response.arrayBuffer());
+    } catch {
+      await message.reply("Failed to download the attached image. Please try again.");
+      return;
     }
-    return;
   }
 
-  // type === "gradient"
-  const color1 = args[3];
-  const color2 = args[4];
-
-  if (!color1 || !color2) {
+  // Check that the bot has Manage Roles permission.
+  const botMember = await message.guild.members.fetchMe();
+  if (!botMember.permissions.has(MANAGE_ROLES_PERMISSION)) {
     await message.reply(
-      "Usage: `!u create <name> gradient <#HEXCODE> <#HEXCODE>`\n" +
-      "Example: `!u create MyRole gradient #006400 #FFD700`"
+      "I don't have the **Manage Roles** permission. Please grant it to me in the server settings."
     );
     return;
   }
 
-  const parsed1 = parseHexColor(color1);
-  const parsed2 = parseHexColor(color2);
+  // Use the first color as the role color.
+  const roleColor = parseInt(color1.slice(1), 16);
 
-  if (parsed1 === null) {
-    await message.reply(
-      `Invalid first HEX color: \`${color1}\`. Use a 6-digit hex code, e.g. \`#006400\`.`
-    );
-    return;
-  }
-  if (parsed2 === null) {
-    await message.reply(
-      `Invalid second HEX color: \`${color2}\`. Use a 6-digit hex code, e.g. \`#FFD700\`.`
-    );
-    return;
+  const roleOptions = {
+    name,
+    color: roleColor,
+    reason: `Role created by ${message.author.tag} via !u create`,
+  };
+
+  if (iconBuffer) {
+    roleOptions.icon = iconBuffer;
   }
 
-  // Discord gradient roles require the guild to be boosted at Level 2+.
-  // The role is created with the gradient via the `color` field set to the
-  // first color, then we PATCH with gradient data using the REST API.
-  const roleData = { name, color: parsed1 };
-
-  const iconResult = await tryResolveRoleIcon(message);
-  if (iconResult.error) {
-    await message.reply(iconResult.error);
-    return;
-  }
-  if (iconResult.icon) {
-    roleData.icon = iconResult.icon;
-  }
-
-  let created;
   try {
-    created = await message.guild.roles.create(roleData);
-  } catch (error) {
-    await message.reply(formatRoleError(error, "create the role"));
-    return;
-  }
-
-  // Now apply the gradient via the REST API.
-  try {
-    const rest = new REST({ version: "10" }).setToken(token);
-    await rest.patch(Routes.guildRole(message.guild.id, created.id), {
-      body: {
-        color: parseInt(parsed1.replace("#", ""), 16),
-        gradient_color: parseInt(parsed2.replace("#", ""), 16),
-      },
-    });
+    const createdRole = await message.guild.roles.create(roleOptions);
 
     const embed = new EmbedBuilder()
-      .setColor(parsed1)
-      .setTitle("✅ Role Created")
-      .setDescription(
-        `Role **${created.name}** has been created with a gradient from \`${parsed1}\` to \`${parsed2}\`.` +
-        (iconResult.icon ? " A role icon was also set." : "")
+      .setColor(color1)
+      .setTitle("Role Created")
+      .addFields(
+        { name: "Name", value: createdRole.name, inline: true },
+        { name: "Type", value: type, inline: true },
+        { name: "Color", value: color1, inline: true }
       )
       .setFooter({ text: `Created by ${message.author.tag}` })
       .setTimestamp();
-    await message.reply({ embeds: [embed] });
-  } catch (error) {
-    // Gradient requires Level 2 boost. If it fails, the role still exists
-    // with the first solid color — inform the user.
-    const errCode = error?.code;
-    let errMsg =
-      `The role **${created.name}** was created with color \`${parsed1}\`, but the gradient could not be applied.`;
-    if (errCode === 50035 || errCode === 30032) {
-      errMsg +=
-        " Gradient roles require the server to be at **Boost Level 2** or higher.";
+
+    if (type === "gradient" && color2) {
+      embed.addFields({ name: "Color 2", value: color2, inline: true });
     }
-    await message.reply(errMsg);
-  }
-}
 
-async function prefixSet(message, args) {
-  // !u set role icon [role] [image/emoji]
-  if (
-    !message.memberPermissions ||
-    !message.memberPermissions.has(PermissionFlagsBits.ManageRoles)
-  ) {
-    await message.reply("You need the **Manage Roles** permission to use this command.");
-    return;
-  }
+    if (iconBuffer) {
+      embed.addFields({ name: "Icon", value: "Image attached", inline: true });
+    }
 
-  // Expect: !u set role icon <role> [image/emoji]
-  if ((args[1] || "").toLowerCase() !== "role" || (args[2] || "").toLowerCase() !== "icon") {
-    await message.reply('Usage: `!u set role icon <role> [image attachment or emoji]`');
-    return;
-  }
-
-  const roleArg = args[3];
-  if (!roleArg) {
-    await message.reply('Usage: `!u set role icon <role> [image attachment or emoji]`');
-    return;
-  }
-
-  const role = resolveRole(message.guild, roleArg);
-  if (!role) {
-    await message.reply(`Could not find a role matching \`${roleArg}\`. Use a role mention, ID, or exact name.`);
-    return;
-  }
-
-  const botMember = await message.guild.members.fetchMe();
-  if (role.position >= botMember.roles.highest.position) {
-    await message.reply(
-      `I can't manage **${role.name}** because it is at or above my highest role. Move my role above it in the server settings.`
-    );
-    return;
-  }
-
-  // Resolve the icon from attachment or emoji text.
-  const iconResult = await tryResolveRoleIcon(message);
-  if (iconResult.error) {
-    await message.reply(iconResult.error);
-    return;
-  }
-  if (!iconResult.icon) {
-    await message.reply(
-      "Please provide an image attachment or a custom emoji to use as the role icon.\n" +
-      "Attach an image (PNG, JPEG, GIF, or WebP under 256 KB) or type a custom emoji like `:emoji_name:`."
-    );
-    return;
-  }
-
-  try {
-    await role.setIcon(iconResult.icon);
-    const embed = new EmbedBuilder()
-      .setColor("#006400")
-      .setTitle("✅ Role Icon Updated")
-      .setDescription(`The icon for **${role.name}** has been updated.`)
-      .setFooter({ text: `Updated by ${message.author.tag}` })
-      .setTimestamp();
     await message.reply({ embeds: [embed] });
   } catch (error) {
-    await message.reply(formatRoleError(error, "update the role icon"));
-  }
-}
+    // Handle Discord role-icon limitation: role icons require server Level 2 boost.
+    if (iconBuffer && error.code === 50006) {
+      // Retry without the icon.
+      try {
+        delete roleOptions.icon;
+        const createdRole = await message.guild.roles.create(roleOptions);
 
-async function prefixMove(message, args) {
-  // !u move [role] [above/down] [target_role]
-  if (
-    !message.memberPermissions ||
-    !message.memberPermissions.has(PermissionFlagsBits.ManageRoles)
-  ) {
-    await message.reply("You need the **Manage Roles** permission to use this command.");
-    return;
-  }
+        const embed = new EmbedBuilder()
+          .setColor(color1)
+          .setTitle("Role Created (without icon)")
+          .setDescription(
+            "The role was created, but the icon could not be set. Role icons require the server to be at **Level 2 Boost** or higher."
+          )
+          .addFields(
+            { name: "Name", value: createdRole.name, inline: true },
+            { name: "Type", value: type, inline: true },
+            { name: "Color", value: color1, inline: true }
+          )
+          .setFooter({ text: `Created by ${message.author.tag}` })
+          .setTimestamp();
 
-  const roleArg = args[1];
-  const direction = (args[2] || "").toLowerCase();
-  const targetArg = args[3];
+        if (type === "gradient" && color2) {
+          embed.addFields({ name: "Color 2", value: color2, inline: true });
+        }
 
-  if (!roleArg || !direction || !targetArg) {
+        await message.reply({ embeds: [embed] });
+        return;
+      } catch (retryError) {
+        await message.reply(
+          `Failed to create the role even without the icon: ${retryError.message}`
+        );
+        return;
+      }
+    }
+
     await message.reply(
-      "Usage: `!u move <role> <above|below> <target_role>`\n" +
-      "Example: `!u move @MyRole below @Staff`"
+      `Failed to create the role: ${error.message}`
     );
-    return;
-  }
-
-  if (direction !== "above" && direction !== "below") {
-    await message.reply('Direction must be **"above"** or **"below"**.');
-    return;
-  }
-
-  const role = resolveRole(message.guild, roleArg);
-  if (!role) {
-    await message.reply(`Could not find a role matching \`${roleArg}\`. Use a role mention, ID, or exact name.`);
-    return;
-  }
-
-  const targetRole = resolveRole(message.guild, targetArg);
-  if (!targetRole) {
-    await message.reply(`Could not find a target role matching \`${targetArg}\`. Use a role mention, ID, or exact name.`);
-    return;
-  }
-
-  if (role.id === targetRole.id) {
-    await message.reply("The role and the target role cannot be the same.");
-    return;
-  }
-
-  const botMember = await message.guild.members.fetchMe();
-
-  // The bot cannot manage roles at or above its own highest role.
-  if (role.position >= botMember.roles.highest.position) {
-    await message.reply(
-      `I can't move **${role.name}** because it is at or above my highest role. Move my role above it in the server settings.`
-    );
-    return;
-  }
-  if (targetRole.position >= botMember.roles.highest.position) {
-    await message.reply(
-      `I can't move relative to **${targetRole.name}** because it is at or above my highest role. Move my role above it in the server settings.`
-    );
-    return;
-  }
-
-  // Compute the new position.
-  // Discord positions are 0-based ascending. The @everyone role is at 0.
-  // To move a role "above" a target, we set it to target.position + 1.
-  // To move "below", we set it to target.position - 1 (but not below 1).
-  let newPosition;
-  if (direction === "above") {
-    newPosition = targetRole.position + 1;
-  } else {
-    newPosition = Math.max(1, targetRole.position - 1);
-  }
-
-  try {
-    await role.setPosition(newPosition);
-    const embed = new EmbedBuilder()
-      .setColor("#006400")
-      .setTitle("✅ Role Moved")
-      .setDescription(
-        `**${role.name}** has been moved **${direction}** **${targetRole.name}**.`
-      )
-      .setFooter({ text: `Moved by ${message.author.tag}` })
-      .setTimestamp();
-    await message.reply({ embeds: [embed] });
-  } catch (error) {
-    await message.reply(formatRoleError(error, "move the role"));
   }
 }
 
@@ -1413,17 +1160,6 @@ async function requireAdmin(interaction, fn) {
   if (!interaction.memberPermissions || !interaction.memberPermissions.has(ADMIN_PERMISSION)) {
     await interaction.reply({
       content: "You need the Administrator permission to use this command.",
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-  await fn();
-}
-
-async function requirePermission(interaction, permissionFlag, permissionName, fn) {
-  if (!interaction.memberPermissions || !interaction.memberPermissions.has(permissionFlag)) {
-    await interaction.reply({
-      content: `You need the **${permissionName}** permission to use this command.`,
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -1510,97 +1246,6 @@ async function resolveDisplayName(interaction, user) {
     if (member) return member.displayName;
   }
   return user.globalName ?? user.tag;
-}
-
-// Resolves a role from a mention (<@&ID>), raw ID, or exact name (case-insensitive).
-function resolveRole(guild, input) {
-  if (!input || typeof input !== "string") return null;
-  const trimmed = input.trim();
-
-  // Role mention: <@&123456789>
-  const mentionMatch = trimmed.match(/^<@&(\d+)>$/);
-  if (mentionMatch) {
-    return guild.roles.cache.get(mentionMatch[1]) || null;
-  }
-
-  // Raw ID
-  if (/^\d+$/.test(trimmed)) {
-    return guild.roles.cache.get(trimmed) || null;
-  }
-
-  // Exact name match (case-insensitive)
-  const lower = trimmed.toLowerCase();
-  return (
-    guild.roles.cache.find((r) => r.name.toLowerCase() === lower) || null
-  );
-}
-
-// Resolves a role icon from either an attached image or a custom emoji in the message.
-// Returns { icon: string } on success, { icon: null } if none provided,
-// or { error: string } on validation failure.
-async function tryResolveRoleIcon(message) {
-  const attachment = message.attachments.first();
-
-  if (attachment) {
-    const validTypes = [
-      "image/png",
-      "image/jpeg",
-      "image/gif",
-      "image/webp",
-    ];
-    if (!validTypes.includes(attachment.contentType)) {
-      return {
-        error:
-          "The attached file must be an image (PNG, JPEG, GIF, or WebP) to use as a role icon.",
-      };
-    }
-    if (attachment.size > 256 * 1024) {
-      return {
-        error:
-          "The image is too large. Role icon images must be under **256 KB**.",
-      };
-    }
-    try {
-      const response = await fetch(attachment.url);
-      if (!response.ok) {
-        return { error: "Could not download the attached image. Please try again." };
-      }
-      const buffer = await response.arrayBuffer();
-      const base64 = Buffer.from(buffer).toString("base64");
-      return { icon: `data:${attachment.contentType};base64,${base64}` };
-    } catch {
-      return { error: "Could not download the attached image. Please try again." };
-    }
-  }
-
-  // Check for custom emoji in the message content.
-  // Custom emoji format: <:name:id> or <a:name:id>
-  const emojiMatch = message.content.match(/<(a)?:([a-zA-Z0-9_]+):(\d+)>/);
-  if (emojiMatch) {
-    const emojiId = emojiMatch[3];
-    const isAnimated = !!emojiMatch[1];
-    const extension = isAnimated ? "gif" : "png";
-    return {
-      icon: `https://cdn.discordapp.com/emojis/${emojiId}.${extension}`,
-    };
-  }
-
-  return { icon: null };
-}
-
-function formatRoleError(error, action) {
-  const errCode = error?.code;
-  let errMsg = `Could not ${action}. Please try again.`;
-
-  if (errCode === 50013) {
-    errMsg = `I don't have permission to ${action}. Make sure I have the **Manage Roles** permission and my role is high enough.`;
-  } else if (errCode === 50035) {
-    errMsg = `Invalid data provided. Could not ${action}.`;
-  } else if (errCode === 30032) {
-    errMsg = "The server has reached its role limit.";
-  }
-
-  return errMsg;
 }
 
 client.login(token);
