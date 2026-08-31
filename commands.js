@@ -236,7 +236,7 @@ const commandDefinitions = [
 
   new SlashCommandBuilder()
     .setName("info")
-    .setDescription("Show information about the bot.")
+    .setDescription("Show information about Lumi, including ping and uptime.")
     .toJSON(),
 
   new SlashCommandBuilder()

@@ -45,6 +45,9 @@ const quarantineStore = new Map();
 
 const ADMIN_PERMISSION = PermissionFlagsBits.Administrator;
 
+// --- Bot startup time (in-memory only; resets on restart) -------------------
+let botStartupTime = null;
+
 // --- Rotating presence (in-memory only; resets on restart) -----------------
 // Lumi cycles through a playlist every 10 seconds.
 const presenceSongs = [
@@ -70,6 +73,8 @@ const client = new Client({
 
 client.once(Events.ClientReady, async (readyClient) => {
   console.log(`Ready! Logged in as ${readyClient.user.tag}`);
+
+  botStartupTime = Date.now();
 
   // Auto-register slash commands so they appear in Discord without a manual
   // deploy step. Uses the bot application's own ID (the logged-in user).
@@ -183,6 +188,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       );
       break;
     }
+    case "info": {
+      await handleInfo(interaction);
+      break;
+    }
     default:
       break;
   }
@@ -291,6 +300,44 @@ client.on(Events.MessageCreate, async (message) => {
 });
 
 // --- Command implementations ----------------------------------------------
+
+async function handleInfo(interaction) {
+  const inviteUrl =
+    "https://discord.com/oauth2/authorize?client_id=1543079364604985364&permissions=8&scope=bot%20applications.commands";
+
+  const ping = Math.round(interaction.client.ws.ping);
+  const pingText = Number.isNaN(ping) ? "Connecting…" : `${ping} ms`;
+
+  const uptimeText = botStartupTime
+    ? formatDuration(Date.now() - botStartupTime)
+    : "Unknown";
+
+  const avatarUrl = interaction.client.user.displayAvatarURL({
+    size: 4096,
+    extension: "png",
+  });
+
+  const embed = new EmbedBuilder()
+    .setColor("#006400")
+    .setTitle("Lumi — Bot Info")
+    .setThumbnail(avatarUrl)
+    .addFields(
+      { name: "Name", value: "Lumi", inline: true },
+      { name: "Ping", value: pingText, inline: true },
+      { name: "Restarted", value: uptimeText, inline: true }
+    )
+    .setFooter({ text: `Requested by ${interaction.user.tag}` })
+    .setTimestamp();
+
+  const inviteButton = new ButtonBuilder()
+    .setLabel("Invite Lumi")
+    .setStyle(ButtonStyle.Link)
+    .setURL(inviteUrl);
+
+  const row = new ActionRowBuilder().addComponents(inviteButton);
+
+  await interaction.reply({ embeds: [embed], components: [row] });
+}
 
 async function handleAfk(interaction) {
   const reason = interaction.options.getString("reason") || "No reason provided.";
