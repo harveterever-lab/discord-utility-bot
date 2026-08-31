@@ -257,7 +257,7 @@ client.on(Events.MessageCreate, async (message) => {
     /* old message may already be gone */
   }
 
-  const stickyText = `📌 __Stickied Message__\n${sticky.content}`;
+  const stickyText = `## 📌 __Stickied Message__\n${sticky.content}`;
 
   try {
     const sent = await message.channel.send(stickyText);
@@ -625,7 +625,7 @@ async function handleSticky(interaction) {
     }
   }
 
-  const stickyText = `📌 __Stickied Message__\n${content}`;
+  const stickyText = `## 📌 __Stickied Message__\n${content}`;
 
   const sent = await interaction.channel.send(stickyText);
 
