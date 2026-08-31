@@ -10,6 +10,8 @@ const {
   ActionRowBuilder,
   REST,
   Routes,
+  ActivityType,
+  Status,
 } = require("discord.js");
 require("dotenv").config();
 
@@ -43,7 +45,18 @@ const quarantineStore = new Map();
 
 const ADMIN_PERMISSION = PermissionFlagsBits.Administrator;
 
-const startTime = Date.now();
+// --- Rotating presence (in-memory only; resets on restart) -----------------
+// Lumi cycles through a playlist every 10 seconds.
+const presenceSongs = [
+  "oui — Jeremih",
+  "God's Plan — Drake",
+  "Neon Kitchen — Devon Hendryx",
+  "One Dance — Drake",
+  "FE!N — Travis Scott ft. Playboi Carti",
+  "Shoota — Playboi Carti ft. Lil Uzi Vert",
+];
+let presenceInterval = null;
+let presenceIndex = 0;
 
 // --- Bot client ------------------------------------------------------------
 const client = new Client({
@@ -72,6 +85,26 @@ client.once(Events.ClientReady, async (readyClient) => {
   } catch (error) {
     console.error("Failed to register application commands:", error);
   }
+
+  // --- Rotating presence -----------------------------------------------
+  // Guard against duplicate intervals (e.g. if the ready event fires more
+  // than once during development or after a reconnection).
+  if (presenceInterval) {
+    clearInterval(presenceInterval);
+    presenceInterval = null;
+  }
+
+  const setPresence = () => {
+    const song = presenceSongs[presenceIndex];
+    readyClient.user.setPresence({
+      activities: [{ name: song, type: ActivityType.Listening }],
+      status: Status.Online,
+    });
+    presenceIndex = (presenceIndex + 1) % presenceSongs.length;
+  };
+
+  setPresence();
+  presenceInterval = setInterval(setPresence, 10_000);
 });
 
 // --- Slash command handler -------------------------------------------------
@@ -148,14 +181,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         "Manage Messages",
         () => handlePurgeUserSlash(interaction)
       );
-      break;
-    }
-    case "info": {
-      await handleInfo(interaction);
-      break;
-    }
-    case "arcane-seal": {
-      await requireAdmin(interaction, () => handleArcaneSeal(interaction));
       break;
     }
     default:
@@ -999,10 +1024,27 @@ async function handlePurgeUserSlash(interaction) {
 
 async function prefixEmoji(message, args) {
   // !u emoji [image attachment] [name]
-  if (
-    !message.memberPermissions ||
-    !message.memberPermissions.has(PermissionFlagsBits.ManageGuildExpressions)
-  ) {
+
+  // Resolve the member's permissions reliably. message.memberPermissions can
+  // be null when the member isn't fully cached, so we use message.member
+  // and fall back to a fetch if needed. Server owners implicitly pass.
+  let member = message.member;
+  if (!member) {
+    try {
+      member = await message.guild.members.fetch(message.author.id);
+    } catch {
+      await message.reply("Could not resolve your member data. Please try again.");
+      return;
+    }
+  }
+
+  const isOwner = message.guild.ownerId === message.author.id;
+  const hasPermission =
+    isOwner ||
+    (member.permissions &&
+      member.permissions.has(PermissionFlagsBits.ManageGuildExpressions));
+
+  if (!hasPermission) {
     await message.reply("You need the **Manage Expressions** permission to use this command.");
     return;
   }
@@ -1092,162 +1134,6 @@ async function prefixEmoji(message, args) {
   }
 }
 
-async function handleInfo(interaction) {
-  const ping = Math.round(interaction.client.ws.ping);
-  const uptime = formatDuration(Date.now() - startTime);
-  const botAvatar = interaction.client.user.displayAvatarURL({ size: 4096, extension: "png" });
-
-  const embed = new EmbedBuilder()
-    .setColor("#006400")
-    .setTitle("Lumi — Bot Info")
-    .setThumbnail(botAvatar)
-    .addFields(
-      { name: "Name", value: "Lumi", inline: true },
-      { name: "Ping", value: `${ping}ms`, inline: true },
-      { name: "Invite", value: "[Link](https://discord.com/oauth2/authorize?client_id=1543079364604985364&permissions=8&scope=bot%20applications.commands)", inline: true },
-      { name: "Restarted", value: uptime, inline: true }
-    );
-
-  await interaction.reply({ embeds: [embed] });
-}
-
-async function handleArcaneSeal(interaction) {
-  const targetChannel = interaction.options.getChannel("channel");
-
-  await interaction.reply({
-    content: `🔮 Casting arcane seal on ${targetChannel}...`,
-    flags: MessageFlags.Ephemeral,
-  });
-
-  const stages = [
-    {
-      title: "🔮 __LUMI'S WITCHCRAFT__",
-      description:
-        "*The air grows unnaturally still...*\n\uFE0F\n🕯️ *Lumi begins weaving an ancient spell.*\n\uFE0F\n`ARCANE RITUAL`\n\uFE0F\n⏳ **5...**",
-    },
-    {
-      title: "🔮 __LUMI'S WITCHCRAFT__",
-      description:
-        "*The shadows begin to gather around the seal...*\n\uFE0F\n✨ *The magic is awakening.*\n\uFE0F\n`SEAL PREPARATION`\n\uFE0F\n⏳ **4...**",
-    },
-    {
-      title: "🔮 __LUMI'S WITCHCRAFT__",
-      description:
-        "*Ancient symbols begin glowing in the air...*\n\uFE0F\n🕯️ *The ritual grows stronger.*\n\uFE0F\n`ARCANE ENERGY: RISING`\n\uFE0F\n⏳ **3...**",
-    },
-    {
-      title: "🔮 __LUMI'S WITCHCRAFT__",
-      description:
-        "*The arcane energy reaches its peak...*\n\uFE0F\n🌙 *The seal is almost complete.*\n\uFE0F\n`FINAL INCANTATION`\n\uFE0F\n⏳ **2...**",
-    },
-    {
-      title: "🔮 __LUMI'S WITCHCRAFT__",
-      description:
-        "*The final incantation echoes through the room...*\n\uFE0F\n⚡ *The spell is ready.*\n\uFE0F\n`CASTING COMPLETE`\n\uFE0F\n⏳ **1...**",
-    },
-  ];
-
-  const sent = await targetChannel.send({
-    embeds: [
-      new EmbedBuilder()
-        .setColor("#006400")
-        .setTitle(stages[0].title)
-        .setDescription(stages[0].description),
-    ],
-  });
-
-  for (let i = 1; i < stages.length; i++) {
-    await sleep(1000);
-    await sent
-      .edit({
-        embeds: [
-          new EmbedBuilder()
-            .setColor("#006400")
-            .setTitle(stages[i].title)
-            .setDescription(stages[i].description),
-        ],
-      })
-      .catch(() => {});
-  }
-
-  await sleep(1000);
-
-  const everyoneRole = interaction.guild.roles.everyone;
-  const previousPerms = targetChannel.permissionOverwrites.cache.get(everyoneRole.id);
-  const hadSendPerm = previousPerms
-    ? previousPerms.allow.has(PermissionFlagsBits.SendMessages)
-    : false;
-  const previousDenySend = previousPerms
-    ? previousPerms.deny.has(PermissionFlagsBits.SendMessages)
-    : false;
-
-  try {
-    await targetChannel.permissionOverwrites.edit(everyoneRole, {
-      SendMessages: false,
-    });
-  } catch {
-    await sent
-      .edit({
-        embeds: [
-          new EmbedBuilder()
-            .setColor("#006400")
-            .setTitle("🔮 __ARCANE SEAL__")
-            .setDescription(
-              "*The ritual failed — Lumi lacks permission to manage this channel.*"
-            ),
-        ],
-      })
-      .catch(() => {});
-    return;
-  }
-
-  await sent
-    .edit({
-      embeds: [
-        new EmbedBuilder()
-          .setColor("#006400")
-          .setTitle("🔮 __ARCANE SEAL__")
-          .setDescription(
-            "*The ritual is complete.*\n\uFE0F\n🔒 **Lumi has sealed this channel.**\n\uFE0F\n__No messages shall pass through the seal for 10 seconds.__\n\uFE0F\n✨ `SEAL: ACTIVE`"
-          ),
-      ],
-    })
-    .catch(() => {});
-
-  await sleep(10000);
-
-  try {
-    if (previousPerms) {
-      await targetChannel.permissionOverwrites.edit(everyoneRole, {
-        SendMessages: hadSendPerm ? true : previousDenySend ? false : null,
-      });
-    } else {
-      await targetChannel.permissionOverwrites.edit(everyoneRole, {
-        SendMessages: null,
-      });
-    }
-  } catch {
-    /* best-effort restore */
-  }
-
-  await sent
-    .edit({
-      embeds: [
-        new EmbedBuilder()
-          .setColor("#006400")
-          .setTitle("🌙 __ARCANE SEAL — COMPLETE__")
-          .setDescription(
-            "*The ancient seal has finally faded away.*\n\uFE0F\n🔓 **The channel has been unsealed.**\n\uFE0F\n~~The magic is no more.~~\n\uFE0F\n✨ `SEAL: DISPELLED`\n\uFE0F\n*Lumi's magic has dissipated into the air.*"
-          ),
-      ],
-    })
-    .catch(() => {});
-
-  await sleep(15000);
-
-  await sent.delete().catch(() => {});
-}
-
 // --- Helpers ---------------------------------------------------------------
 
 async function requireAdmin(interaction, fn) {
@@ -1331,10 +1217,6 @@ function isValidHttpUrl(input) {
   } catch {
     return false;
   }
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function formatDuration(ms) {
