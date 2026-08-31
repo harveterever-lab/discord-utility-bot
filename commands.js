@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
+const { SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require("discord.js");
 
 // All slash command definitions live here so both index.js (auto-register on
 // startup) and deploy-commands.js (manual CLI deploy) stay perfectly in sync.
@@ -213,6 +213,7 @@ const commandDefinitions = [
     )
     .toJSON(),
 
+  // --- purgeuser slash command ---
   new SlashCommandBuilder()
     .setName("purgeuser")
     .setDescription("Purge recent messages from a specific user in this channel.")
@@ -236,6 +237,19 @@ const commandDefinitions = [
   new SlashCommandBuilder()
     .setName("info")
     .setDescription("Show information about the bot.")
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName("arcane-seal")
+    .setDescription("Cast an arcane seal that temporarily locks a channel (admin only).")
+    .addChannelOption((option) =>
+      option
+        .setName("channel")
+        .setDescription("The channel to seal.")
+        .setRequired(true)
+        .addChannelTypes(ChannelType.GuildText)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .toJSON(),
 ];
 
