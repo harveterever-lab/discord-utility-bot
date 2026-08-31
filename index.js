@@ -1119,34 +1119,54 @@ async function handleArcaneSeal(interaction) {
     flags: MessageFlags.Ephemeral,
   });
 
+  const countdownStages = [
+    {
+      title: "\uD83D\uDD2E LUMI'S WITCHCRAFT",
+      description:
+        "The air grows unnaturally still...\n\uD83D\uDD6A\uFE0F Lumi begins weaving an ancient spell.\n\u23F3 5...",
+    },
+    {
+      title: "\uD83D\uDD2E LUMI'S WITCHCRAFT",
+      description:
+        "The shadows begin to gather around the seal...\n\u2728 The magic is awakening.\n\u23F3 4...",
+    },
+    {
+      title: "\uD83D\uDD2E LUMI'S WITCHCRAFT",
+      description:
+        "Ancient symbols begin glowing in the air...\n\uD83D\uDD6A\uFE0F The ritual grows stronger.\n\u23F3 3...",
+    },
+    {
+      title: "\uD83D\uDD2E LUMI'S WITCHCRAFT",
+      description:
+        "The arcane energy reaches its peak...\n\uD83C\uDF19 The seal is almost complete.\n\u23F3 2...",
+    },
+    {
+      title: "\uD83D\uDD2E LUMI'S WITCHCRAFT",
+      description:
+        "The final incantation echoes through the room...\n\u26A1 The spell is ready.\n\u23F3 1...",
+    },
+  ];
+
   const sent = await targetChannel.send({
     embeds: [
       new EmbedBuilder()
         .setColor("#006400")
-        .setTitle("\uD83D\uDD2E LUMI'S WITCHCRAFT")
-        .setDescription("The air grows unnaturally still...\n\uD83D\uDD6A\uFE0F Lumi begins weaving an ancient spell.\n\u23F3 3..."),
+        .setTitle(countdownStages[0].title)
+        .setDescription(countdownStages[0].description),
     ],
   });
 
-  await sleep(1000);
-  await sent.edit({
-    embeds: [
-      new EmbedBuilder()
-        .setColor("#006400")
-        .setTitle("\uD83D\uDD2E LUMI'S WITCHCRAFT")
-        .setDescription("The shadows begin to twist around the room...\n\u2728 The spell is taking shape.\n\u23F3 2..."),
-    ],
-  });
-
-  await sleep(1000);
-  await sent.edit({
-    embeds: [
-      new EmbedBuilder()
-        .setColor("#006400")
-        .setTitle("\uD83D\uDD2E LUMI'S WITCHCRAFT")
-        .setDescription("A surge of arcane energy fills the air...\n\uD83C\uDF19 The final incantation is spoken.\n\u23F3 1..."),
-    ],
-  });
+  for (let i = 1; i < countdownStages.length; i++) {
+    await sleep(1000);
+    await sent.edit({
+      embeds: [
+        new EmbedBuilder()
+          .setColor("#006400")
+          .setTitle(countdownStages[i].title)
+          .setDescription(countdownStages[i].description),
+      ],
+    });
+  }
 
   await sleep(1000);
 
@@ -1180,16 +1200,18 @@ async function handleArcaneSeal(interaction) {
       new EmbedBuilder()
         .setColor("#006400")
         .setTitle("\uD83D\uDD2E ARCANE SEAL")
-        .setDescription("The ritual is complete.\n\uD83D\uDD12 Lumi has sealed this channel.\nNo messages shall pass through the seal for 5 seconds.\n\u2728 The seal will soon fade..."),
+        .setDescription(
+          "The ritual is complete.\n\uD83D\uDD12 Lumi has sealed this channel.\nNo messages shall pass through the seal for 10 seconds.\n\u2728 The seal has been activated."
+        ),
     ],
   });
 
-  await sleep(5000);
+  await sleep(10000);
 
   try {
     if (previousPerms) {
       await targetChannel.permissionOverwrites.edit(everyoneRole, {
-        SendMessages: hadSendPerm ? true : (previousDenySend ? false : null),
+        SendMessages: hadSendPerm ? true : previousDenySend ? false : null,
       });
     } else {
       await targetChannel.permissionOverwrites.edit(everyoneRole, {
@@ -1199,6 +1221,17 @@ async function handleArcaneSeal(interaction) {
   } catch {
     /* best-effort restore */
   }
+
+  await targetChannel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor("#006400")
+        .setTitle("\uD83C\uDF19 ARCANE SEAL — COMPLETE")
+        .setDescription(
+          "The ancient seal has finally faded away.\n\uD83D\uDD13 The channel has been unsealed.\n\u2728 Lumi's magic has dissipated into the air."
+        ),
+    ],
+  });
 }
 
 // --- Helpers ---------------------------------------------------------------
