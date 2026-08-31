@@ -41,8 +41,14 @@ const quarantinedRoles = new Map();
 // Map<guildId, Map<userId, string[]>>  (guild -> user -> saved role IDs)
 const quarantineStore = new Map();
 
+// --- Bot startup time (in-memory only; resets on restart) -------------------
+const startTime = Date.now();
+
 const ADMIN_PERMISSION = PermissionFlagsBits.Administrator;
 const MANAGE_ROLES_PERMISSION = PermissionFlagsBits.ManageRoles;
+const MANAGE_MESSAGES_PERMISSION = PermissionFlagsBits.ManageMessages;
+
+const INVITE_URL = "https://discord.com/oauth2/authorize?client_id=1543079364604985364&permissions=8&scope=bot%20applications.commands";
 
 // --- Bot client ------------------------------------------------------------
 const client = new Client({
@@ -136,6 +142,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
     case "unquarantine": {
       await requireStaff(interaction, () => handleUnquarantine(interaction));
+      break;
+    }
+    case "purgeuser": {
+      await requireManageMessages(interaction, () => handlePurgeUser(interaction));
+      break;
+    }
+    case "info": {
+      await handleInfo(interaction);
       break;
     }
     default:
@@ -857,6 +871,112 @@ async function handleUnquarantine(interaction) {
   await interaction.reply({ embeds: [embed] });
 }
 
+// --- Purge User -------------------------------------------------------------
+
+async function handlePurgeUser(interaction) {
+  const targetUser = interaction.options.getUser("user");
+  const amount = interaction.options.getInteger("amount");
+
+  if (!amount || amount < 1 || amount > 100) {
+    await interaction.reply({
+      content: "Amount must be between 1 and 100.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  try {
+    // Fetch up to 100 recent messages, then filter by the target user.
+    // Discord's bulk delete only works on messages sent within the last 14 days
+    // and allows a maximum of 100 messages per call.
+    const messages = await interaction.channel.messages.fetch({ limit: 100 });
+    const userMessages = messages.filter(
+      (m) => m.author.id === targetUser.id
+    );
+
+    const toDelete = userMessages.first(amount);
+
+    if (toDelete.length === 0) {
+      await interaction.editReply(
+        `No recent messages from ${targetUser} were found in this channel.`
+      );
+      return;
+    }
+
+    // Bulk delete supports up to 100 messages at once.
+    // Messages older than 14 days cannot be bulk-deleted and must be deleted
+    // individually. We attempt bulk first, then fall back to individual deletes.
+    const bulkMessages = toDelete.filter(
+      (m) => Date.now() - m.createdTimestamp < 14 * 24 * 60 * 60 * 1000
+    );
+    const oldMessages = toDelete.filter(
+      (m) => Date.now() - m.createdTimestamp >= 14 * 24 * 60 * 60 * 1000
+    );
+
+    let deletedCount = 0;
+
+    if (bulkMessages.length > 0) {
+      await interaction.channel.bulkDelete(bulkMessages);
+      deletedCount += bulkMessages.length;
+    }
+
+    for (const msg of oldMessages) {
+      try {
+        await msg.delete();
+        deletedCount++;
+      } catch {
+        /* individual delete may fail if message is already gone */
+      }
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor("#006400")
+      .setDescription(
+        `Successfully deleted **${deletedCount}** message${deletedCount === 1 ? "" : "s"} from ${targetUser}.`
+      )
+      .setFooter({ text: `Purged by ${interaction.user.tag}` })
+      .setTimestamp();
+
+    await interaction.editReply({ embeds: [embed] });
+  } catch (error) {
+    await interaction.editReply(
+      `Failed to purge messages: ${error.message}`
+    );
+  }
+}
+
+// --- Bot Info ---------------------------------------------------------------
+
+async function handleInfo(interaction) {
+  const botUser = client.user;
+  const ping = Math.round(client.ws.ping);
+  const avatarUrl = botUser.displayAvatarURL({ size: 4096, extension: "png" });
+  const uptime = formatDuration(Date.now() - startTime);
+
+  const inviteButton = new ButtonBuilder()
+    .setLabel("Invite Lumi")
+    .setStyle(ButtonStyle.Link)
+    .setURL(INVITE_URL);
+
+  const row = new ActionRowBuilder().addComponents(inviteButton);
+
+  const embed = new EmbedBuilder()
+    .setColor("#006400")
+    .setTitle("Lumi — Bot Info")
+    .setThumbnail(avatarUrl)
+    .addFields(
+      { name: "Name", value: "Lumi", inline: true },
+      { name: "Ping", value: `${ping}ms`, inline: true },
+      { name: "Invite", value: `[Link](${INVITE_URL})`, inline: true },
+      { name: "Restarted", value: uptime + " ago", inline: true }
+    )
+    .setTimestamp();
+
+  await interaction.reply({ embeds: [embed], components: [row] });
+}
+
 // --- !u create handler ----------------------------------------------------
 
 async function handleUCreate(message) {
@@ -1051,6 +1171,17 @@ async function requireStaff(interaction, fn) {
     return;
   }
 
+  await fn();
+}
+
+async function requireManageMessages(interaction, fn) {
+  if (!interaction.memberPermissions || !interaction.memberPermissions.has(MANAGE_MESSAGES_PERMISSION)) {
+    await interaction.reply({
+      content: "You need the **Manage Messages** permission to use this command.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
   await fn();
 }
 
