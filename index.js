@@ -911,9 +911,7 @@ async function handleQuarantine(interaction) {
     .setTitle("🔒 Member Quarantined")
     .addFields(
       { name: "Member", value: `${targetUser} (\`${targetUser.id}\`)`, inline: false },
-      { name: "\uFE0F", value: "\u200b", inline: false },
       { name: "Quarantined by", value: `${interaction.user}`, inline: false },
-      { name: "\uFE0F", value: "\u200b", inline: false },
       { name: "Reason:", value: reason || "No reason provided.", inline: false }
     )
     .setTimestamp();
@@ -1009,9 +1007,7 @@ async function handleUnquarantine(interaction) {
     .setTitle("🔓 Member Unquarantined")
     .addFields(
       { name: "Member", value: `${targetUser} (\`${targetUser.id}\`)`, inline: false },
-      { name: "\uFE0F", value: "\u200b", inline: false },
       { name: "Unquarantined by", value: `${interaction.user}`, inline: false },
-      { name: "\uFE0F", value: "\u200b", inline: false },
       { name: "Roles restored", value: restoredCount > 0 ? `${restoredCount}` : "none", inline: false }
     )
     .setTimestamp();
