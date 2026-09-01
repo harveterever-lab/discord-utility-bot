@@ -10,6 +10,8 @@ const {
   ActionRowBuilder,
   REST,
   Routes,
+  ActivityType,
+  Status,
 } = require("discord.js");
 require("dotenv").config();
 
@@ -43,6 +45,22 @@ const quarantineStore = new Map();
 
 const ADMIN_PERMISSION = PermissionFlagsBits.Administrator;
 
+// --- Bot startup time (in-memory only; resets on restart) -------------------
+let botStartupTime = null;
+
+// --- Rotating presence (in-memory only; resets on restart) -----------------
+// Lumi cycles through a playlist every 10 seconds.
+const presenceSongs = [
+  "oui — Jeremih",
+  "God's Plan — Drake",
+  "Neon Kitchen — Devon Hendryx",
+  "One Dance — Drake",
+  "FE!N — Travis Scott ft. Playboi Carti",
+  "Shoota — Playboi Carti ft. Lil Uzi Vert",
+];
+let presenceInterval = null;
+let presenceIndex = 0;
+
 // --- Bot client ------------------------------------------------------------
 const client = new Client({
   intents: [
@@ -55,6 +73,8 @@ const client = new Client({
 
 client.once(Events.ClientReady, async (readyClient) => {
   console.log(`Ready! Logged in as ${readyClient.user.tag}`);
+
+  botStartupTime = Date.now();
 
   // Auto-register slash commands so they appear in Discord without a manual
   // deploy step. Uses the bot application's own ID (the logged-in user).
@@ -70,6 +90,26 @@ client.once(Events.ClientReady, async (readyClient) => {
   } catch (error) {
     console.error("Failed to register application commands:", error);
   }
+
+  // --- Rotating presence -----------------------------------------------
+  // Guard against duplicate intervals (e.g. if the ready event fires more
+  // than once during development or after a reconnection).
+  if (presenceInterval) {
+    clearInterval(presenceInterval);
+    presenceInterval = null;
+  }
+
+  const setPresence = () => {
+    const song = presenceSongs[presenceIndex];
+    readyClient.user.setPresence({
+      activities: [{ name: song, type: ActivityType.Listening }],
+      status: Status.Online,
+    });
+    presenceIndex = (presenceIndex + 1) % presenceSongs.length;
+  };
+
+  setPresence();
+  presenceInterval = setInterval(setPresence, 10_000);
 });
 
 // --- Slash command handler -------------------------------------------------
@@ -148,6 +188,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       );
       break;
     }
+    case "info": {
+      await handleInfo(interaction);
+      break;
+    }
     default:
       break;
   }
@@ -222,7 +266,7 @@ client.on(Events.MessageCreate, async (message) => {
     /* old message may already be gone */
   }
 
-  const stickyText = `📌 __Stickied Message__\n${sticky.content}`;
+  const stickyText = `## 📌 __Stickied Message__\n${sticky.content}`;
 
   try {
     const sent = await message.channel.send(stickyText);
@@ -250,15 +294,50 @@ client.on(Events.MessageCreate, async (message) => {
     case "emoji":
       await prefixEmoji(message, args);
       break;
-    case "set":
-      await prefixSet(message, args);
-      break;
     default:
       break;
   }
 });
 
 // --- Command implementations ----------------------------------------------
+
+async function handleInfo(interaction) {
+  const inviteUrl =
+    "https://discord.com/oauth2/authorize?client_id=1543079364604985364&permissions=8&scope=bot%20applications.commands";
+
+  const ping = Math.round(interaction.client.ws.ping);
+  const pingText = Number.isNaN(ping) ? "Connecting…" : `${ping} ms`;
+
+  const uptimeText = botStartupTime
+    ? formatDuration(Date.now() - botStartupTime)
+    : "Unknown";
+
+  const avatarUrl = interaction.client.user.displayAvatarURL({
+    size: 4096,
+    extension: "png",
+  });
+
+  const embed = new EmbedBuilder()
+    .setColor("#006400")
+    .setTitle("Lumi — Bot Info")
+    .setThumbnail(avatarUrl)
+    .addFields(
+      { name: "Name", value: "Lumi", inline: true },
+      { name: "Ping", value: pingText, inline: true },
+      { name: "Restarted", value: uptimeText, inline: true }
+    )
+    .setFooter({ text: `Requested by ${interaction.user.tag}` })
+    .setTimestamp();
+
+  const inviteButton = new ButtonBuilder()
+    .setLabel("Invite Lumi")
+    .setStyle(ButtonStyle.Link)
+    .setURL(inviteUrl);
+
+  const row = new ActionRowBuilder().addComponents(inviteButton);
+
+  await interaction.reply({ embeds: [embed], components: [row] });
+}
 
 async function handleAfk(interaction) {
   const reason = interaction.options.getString("reason") || "No reason provided.";
@@ -593,7 +672,7 @@ async function handleSticky(interaction) {
     }
   }
 
-  const stickyText = `📌 __Stickied Message__\n${content}`;
+  const stickyText = `## 📌 __Stickied Message__\n${content}`;
 
   const sent = await interaction.channel.send(stickyText);
 
@@ -813,11 +892,13 @@ async function handleQuarantine(interaction) {
 
   const embed = new EmbedBuilder()
     .setColor("#006400")
-    .setTitle("🔒 Quarantine Log")
+    .setTitle("🔒 Member Quarantined")
     .addFields(
-      { name: "User", value: `${targetUser} (\`${targetUser.id}\`)`, inline: false },
-      { name: "Moderator", value: `${interaction.user}`, inline: false },
-      { name: "Reason", value: reason, inline: false }
+      { name: "Member", value: `${targetUser} (\`${targetUser.id}\`)`, inline: false },
+      { name: "️", value: "​", inline: false },
+      { name: "Quarantined by", value: `${interaction.user}`, inline: false },
+      { name: "️", value: "​", inline: false },
+      { name: "Reason:", value: reason || "No reason provided.", inline: false }
     )
     .setTimestamp();
 
@@ -886,6 +967,7 @@ async function handleUnquarantine(interaction) {
   // Restore saved roles from memory, if available.
   const guildQuarantine = quarantineStore.get(guild.id);
   const savedRoleIds = guildQuarantine ? guildQuarantine.get(targetUser.id) : null;
+  let restoredCount = 0;
 
   if (savedRoleIds && savedRoleIds.length > 0) {
     const rolesToAdd = [];
@@ -898,6 +980,7 @@ async function handleUnquarantine(interaction) {
     if (rolesToAdd.length > 0) {
       try {
         await targetMember.roles.add(rolesToAdd);
+        restoredCount = rolesToAdd.length;
       } catch {
         /* proceed even if some additions fail */
       }
@@ -907,10 +990,13 @@ async function handleUnquarantine(interaction) {
 
   const embed = new EmbedBuilder()
     .setColor("#006400")
-    .setTitle("🔓 Unquarantine Log")
+    .setTitle("🔓 Member Unquarantined")
     .addFields(
-      { name: "User", value: `${targetUser} (\`${targetUser.id}\`)`, inline: false },
-      { name: "Moderator", value: `${interaction.user}`, inline: false }
+      { name: "Member", value: `${targetUser} (\`${targetUser.id}\`)`, inline: false },
+      { name: "️", value: "​", inline: false },
+      { name: "Unquarantined by", value: `${interaction.user}`, inline: false },
+      { name: "️", value: "​", inline: false },
+      { name: "Roles restored", value: restoredCount > 0 ? `${restoredCount}` : "none", inline: false }
     )
     .setTimestamp();
 
@@ -992,10 +1078,27 @@ async function handlePurgeUserSlash(interaction) {
 
 async function prefixEmoji(message, args) {
   // !u emoji [image attachment] [name]
-  if (
-    !message.memberPermissions ||
-    !message.memberPermissions.has(PermissionFlagsBits.ManageGuildExpressions)
-  ) {
+
+  // Resolve the member's permissions reliably. message.memberPermissions can
+  // be null when the member isn't fully cached, so we use message.member
+  // and fall back to a fetch if needed. Server owners implicitly pass.
+  let member = message.member;
+  if (!member) {
+    try {
+      member = await message.guild.members.fetch(message.author.id);
+    } catch {
+      await message.reply("Could not resolve your member data. Please try again.");
+      return;
+    }
+  }
+
+  const isOwner = message.guild.ownerId === message.author.id;
+  const hasPermission =
+    isOwner ||
+    (member.permissions &&
+      member.permissions.has(PermissionFlagsBits.ManageGuildExpressions));
+
+  if (!hasPermission) {
     await message.reply("You need the **Manage Expressions** permission to use this command.");
     return;
   }
@@ -1083,149 +1186,6 @@ async function prefixEmoji(message, args) {
 
     await message.reply(errMsg);
   }
-}
-
-// --- Prefix: !u set -------------------------------------------------------
-
-async function prefixSet(message, args) {
-  // !u set <target> ...
-  const target = args[1]?.toLowerCase();
-
-  switch (target) {
-    case "role":
-      await prefixSetRole(message, args);
-      break;
-    default:
-      await message.reply("Usage: `!u set role icon @Role` (with an attached image)");
-      break;
-  }
-}
-
-async function prefixSetRole(message, args) {
-  // !u set role <action> ...
-  const action = args[2]?.toLowerCase();
-
-  switch (action) {
-    case "icon":
-      await prefixSetRoleIcon(message, args);
-      break;
-    default:
-      await message.reply("Usage: `!u set role icon @Role` (with an attached image)");
-      break;
-  }
-}
-
-async function prefixSetRoleIcon(message, args) {
-  // !u set role icon @Role  (with an attached image)
-  // Require Administrator OR Manage Roles.
-  const member = message.member;
-  if (
-    !member ||
-    !member.permissions ||
-    (!member.permissions.has(PermissionFlagsBits.Administrator) &&
-      !member.permissions.has(PermissionFlagsBits.ManageRoles))
-  ) {
-    await message.reply("You need the **Administrator** or **Manage Roles** permission to use this command.");
-    return;
-  }
-
-  // The role is the 4th argument onward: !u set role icon @Role / RoleName / <id>
-  const roleArg = args.slice(3).join(" ").trim();
-
-  if (!roleArg) {
-    await message.reply("Please mention a role or provide a role name. Usage: `!u set role icon @Role`");
-    return;
-  }
-
-  // Resolve role from mention, name, or ID.
-  const role = await resolveRoleArgument(message, roleArg);
-  if (!role) {
-    await message.reply("Could not find that role. Mention it (e.g. @Role), use its exact name, or provide the role ID.");
-    return;
-  }
-
-  // Require exactly one image attachment.
-  const imageAttachments = message.attachments.filter(
-    (a) => a.contentType && a.contentType.startsWith("image/")
-  );
-
-  if (imageAttachments.size === 0) {
-    await message.reply("Please attach **one image** (PNG, JPG/JPEG, or GIF) to your message to use as the role icon.");
-    return;
-  }
-
-  if (imageAttachments.size > 1) {
-    await message.reply("Please attach only **one image**. Multiple image attachments were detected.");
-    return;
-  }
-
-  const attachment = imageAttachments.first();
-
-  // Validate image format.
-  const validTypes = ["image/png", "image/jpeg", "image/gif"];
-  if (!validTypes.includes(attachment.contentType)) {
-    await message.reply("The attached file must be a **PNG, JPG/JPEG, or GIF** image.");
-    return;
-  }
-
-  // Check bot permissions and role hierarchy.
-  const botMember = await message.guild.members.fetchMe();
-
-  if (!botMember.permissions.has(PermissionFlagsBits.ManageRoles)) {
-    await message.reply("I don't have the **Manage Roles** permission. Please grant it to me and try again.");
-    return;
-  }
-
-  if (role.position >= botMember.roles.highest.position) {
-    await message.reply(
-      `I can't modify **${role.name}** because it is at or above my highest role. Move my role above it in the server settings and try again.`
-    );
-    return;
-  }
-
-  // Download and read the attached image.
-  let base64Data;
-  try {
-    const response = await fetch(attachment.url);
-    if (!response.ok) {
-      await message.reply("Could not download the attached image. Please try again.");
-      return;
-    }
-    const buffer = await response.arrayBuffer();
-    base64Data = Buffer.from(buffer).toString("base64");
-  } catch {
-    await message.reply("Could not read the attached image. Please try again.");
-    return;
-  }
-
-  const dataUri = `data:${attachment.contentType};base64,${base64Data}`;
-
-  // Set the role icon via the Discord API.
-  try {
-    await role.setIcon(dataUri);
-  } catch (error) {
-    const errCode = error?.code;
-    let errMsg = "Could not update the role icon. Please try again.";
-
-    if (errCode === 50013) {
-      errMsg = "I don't have permission to manage that role. Make sure I have the Manage Roles permission and my role is high enough.";
-    } else if (errCode === 50035) {
-      errMsg = "The image is invalid or too large. Discord role icons must be a valid PNG, JPG, or GIF under 256 KB.";
-    }
-
-    await message.reply(errMsg);
-    return;
-  }
-
-  const embed = new EmbedBuilder()
-    .setColor("#006400")
-    .setTitle("✅ Role Icon Updated")
-    .setDescription(`The icon for **${role.name}** has been updated successfully.`)
-    .setThumbnail(role.iconURL())
-    .setFooter({ text: `Updated by ${message.author.tag}` })
-    .setTimestamp();
-
-  await message.reply({ embeds: [embed] });
 }
 
 // --- Helpers ---------------------------------------------------------------
@@ -1334,77 +1294,6 @@ async function resolveDisplayName(interaction, user) {
     if (member) return member.displayName;
   }
   return user.globalName ?? user.tag;
-}
-
-// Resolves a role from a mention (<@&id>), exact name, or raw ID.
-// Uses message.mentions.roles for mentions, guild.roles.cache for name/ID
-// lookups, and falls back to an API fetch for IDs not in cache.
-async function resolveRoleArgument(message, arg) {
-  const guild = message.guild;
-  const trimmed = arg.trim();
-
-  // 1) Role mention: use Discord's parsed mentions (most reliable).
-  if (message.mentions && message.mentions.roles.size > 0) {
-    // If exactly one role is mentioned, use it.
-    if (message.mentions.roles.size === 1) {
-      return message.mentions.roles.first();
-    }
-    // Multiple roles mentioned — ambiguity. Try to match the raw arg to one.
-    const mentionMatch = trimmed.match(/^<@&(\d+)>$/);
-    if (mentionMatch) {
-      const mentioned = message.mentions.roles.get(mentionMatch[1]);
-      if (mentioned) return mentioned;
-    }
-    // Pick the first mentioned role as a best-effort fallback.
-    return message.mentions.roles.first();
-  }
-
-  // 2) Raw role mention format that wasn't in message.mentions (e.g. from
-  //    text that wasn't parsed). Extract the ID and look it up.
-  const mentionMatch = trimmed.match(/^<@&(\d+)>$/);
-  if (mentionMatch) {
-    const roleId = mentionMatch[1];
-    const cached = guild.roles.cache.get(roleId);
-    if (cached) return cached;
-    try {
-      const fetched = await guild.roles.fetch(roleId);
-      if (fetched) return fetched;
-    } catch {
-      /* role may not exist */
-    }
-    return null;
-  }
-
-  // 3) Exact name match (case-sensitive first, then case-insensitive).
-  //    Only exact matches — no partial matching.
-  const exactName = guild.roles.cache.find((r) => r.name === trimmed);
-  if (exactName) return exactName;
-
-  const caseInsensitive = guild.roles.cache.filter(
-    (r) => r.name.toLowerCase() === trimmed.toLowerCase()
-  );
-  if (caseInsensitive.size === 1) {
-    return caseInsensitive.first();
-  }
-  if (caseInsensitive.size > 1) {
-    // Multiple roles with the same name — ambiguous, don't guess.
-    return null;
-  }
-
-  // 4) Raw role ID (17-20 digits).
-  if (/^\d{17,20}$/.test(trimmed)) {
-    const cached = guild.roles.cache.get(trimmed);
-    if (cached) return cached;
-    try {
-      const fetched = await guild.roles.fetch(trimmed);
-      if (fetched) return fetched;
-    } catch {
-      /* role may not exist */
-    }
-    return null;
-  }
-
-  return null;
 }
 
 client.login(token);
