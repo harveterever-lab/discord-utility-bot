@@ -1129,18 +1129,18 @@ async function prefixSetRoleIcon(message, args) {
     return;
   }
 
-  // The role is the 4th argument: !u set role icon @Role
-  const roleArg = args.slice(3).join(" ");
+  // The role is the 4th argument onward: !u set role icon @Role / RoleName / <id>
+  const roleArg = args.slice(3).join(" ").trim();
 
   if (!roleArg) {
     await message.reply("Please mention a role or provide a role name. Usage: `!u set role icon @Role`");
     return;
   }
 
-  // Resolve role from mention or name.
-  const role = resolveRoleArgument(message.guild, roleArg);
+  // Resolve role from mention, name, or ID.
+  const role = await resolveRoleArgument(message, roleArg);
   if (!role) {
-    await message.reply("Could not find that role. Mention it (e.g. @Role) or use its exact name.");
+    await message.reply("Could not find that role. Mention it (e.g. @Role), use its exact name, or provide the role ID.");
     return;
   }
 
@@ -1336,23 +1336,72 @@ async function resolveDisplayName(interaction, user) {
   return user.globalName ?? user.tag;
 }
 
-// Resolves a role from a mention (<@&id>) or by name.
-function resolveRoleArgument(guild, arg) {
-  // Role mention: <@&role_id>
-  const mentionMatch = arg.match(/^<@&(\d+)>$/);
-  if (mentionMatch) {
-    return guild.roles.cache.get(mentionMatch[1]) || null;
+// Resolves a role from a mention (<@&id>), exact name, or raw ID.
+// Uses message.mentions.roles for mentions, guild.roles.cache for name/ID
+// lookups, and falls back to an API fetch for IDs not in cache.
+async function resolveRoleArgument(message, arg) {
+  const guild = message.guild;
+  const trimmed = arg.trim();
+
+  // 1) Role mention: use Discord's parsed mentions (most reliable).
+  if (message.mentions && message.mentions.roles.size > 0) {
+    // If exactly one role is mentioned, use it.
+    if (message.mentions.roles.size === 1) {
+      return message.mentions.roles.first();
+    }
+    // Multiple roles mentioned — ambiguity. Try to match the raw arg to one.
+    const mentionMatch = trimmed.match(/^<@&(\d+)>$/);
+    if (mentionMatch) {
+      const mentioned = message.mentions.roles.get(mentionMatch[1]);
+      if (mentioned) return mentioned;
+    }
+    // Pick the first mentioned role as a best-effort fallback.
+    return message.mentions.roles.first();
   }
 
-  // Try by name (case-insensitive).
-  const byName = guild.roles.cache.find(
-    (r) => r.name.toLowerCase() === arg.toLowerCase()
-  );
-  if (byName) return byName;
+  // 2) Raw role mention format that wasn't in message.mentions (e.g. from
+  //    text that wasn't parsed). Extract the ID and look it up.
+  const mentionMatch = trimmed.match(/^<@&(\d+)>$/);
+  if (mentionMatch) {
+    const roleId = mentionMatch[1];
+    const cached = guild.roles.cache.get(roleId);
+    if (cached) return cached;
+    try {
+      const fetched = await guild.roles.fetch(roleId);
+      if (fetched) return fetched;
+    } catch {
+      /* role may not exist */
+    }
+    return null;
+  }
 
-  // Try as a raw ID.
-  if (/^\d{17,20}$/.test(arg)) {
-    return guild.roles.cache.get(arg) || null;
+  // 3) Exact name match (case-sensitive first, then case-insensitive).
+  //    Only exact matches — no partial matching.
+  const exactName = guild.roles.cache.find((r) => r.name === trimmed);
+  if (exactName) return exactName;
+
+  const caseInsensitive = guild.roles.cache.filter(
+    (r) => r.name.toLowerCase() === trimmed.toLowerCase()
+  );
+  if (caseInsensitive.size === 1) {
+    return caseInsensitive.first();
+  }
+  if (caseInsensitive.size > 1) {
+    // Multiple roles with the same name — ambiguous, don't guess.
+    return null;
+  }
+
+  // 4) Raw role ID (17-20 digits).
+  if (/^\d{17,20}$/.test(trimmed)) {
+    const cached = guild.roles.cache.get(trimmed);
+    if (cached) return cached;
+    try {
+      const fetched = await guild.roles.fetch(trimmed);
+      if (fetched) return fetched;
+    } catch {
+      /* role may not exist */
+    }
+    return null;
   }
 
   return null;
