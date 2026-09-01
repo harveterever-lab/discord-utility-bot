@@ -168,7 +168,7 @@ const commandDefinitions = [
     .toJSON(),
 
   new SlashCommandBuilder()
-    .setName("staff")
+    .setName("qt-staff")
     .setDescription("Set the server's staff role and quarantined role (admin only).")
     .addRoleOption((option) =>
       option

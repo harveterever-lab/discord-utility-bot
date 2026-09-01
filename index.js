@@ -73,11 +73,17 @@ const client = new Client({
 
 client.once(Events.ClientReady, async (readyClient) => {
   console.log(`Ready! Logged in as ${readyClient.user.tag}`);
-
   botStartupTime = Date.now();
 
-  // Auto-register slash commands so they appear in Discord without a manual
-  // deploy step. Uses the bot application's own ID (the logged-in user).
+  // Rotating presence: cycle through the playlist every 10 seconds.
+  if (presenceInterval) clearInterval(presenceInterval);
+  presenceIndex = 0;
+  updatePresence(readyClient);
+  presenceInterval = setInterval(() => {
+    presenceIndex = (presenceIndex + 1) % presenceSongs.length;
+    updatePresence(readyClient);
+  }, 10000);
+
   const clientId = readyClient.user.id;
   const rest = new REST({ version: "10" }).setToken(token);
 
@@ -90,27 +96,14 @@ client.once(Events.ClientReady, async (readyClient) => {
   } catch (error) {
     console.error("Failed to register application commands:", error);
   }
-
-  // --- Rotating presence -----------------------------------------------
-  // Guard against duplicate intervals (e.g. if the ready event fires more
-  // than once during development or after a reconnection).
-  if (presenceInterval) {
-    clearInterval(presenceInterval);
-    presenceInterval = null;
-  }
-
-  const setPresence = () => {
-    const song = presenceSongs[presenceIndex];
-    readyClient.user.setPresence({
-      activities: [{ name: song, type: ActivityType.Listening }],
-      status: Status.Online,
-    });
-    presenceIndex = (presenceIndex + 1) % presenceSongs.length;
-  };
-
-  setPresence();
-  presenceInterval = setInterval(setPresence, 10_000);
 });
+
+function updatePresence(c) {
+  c.user.setPresence({
+    activities: [{ name: presenceSongs[presenceIndex], type: ActivityType.Listening }],
+    status: Status.Online,
+  });
+}
 
 // --- Slash command handler -------------------------------------------------
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -167,7 +160,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await requireAdmin(interaction, () => handleRole(interaction));
       break;
     }
-    case "staff": {
+    case "qt-staff": {
       await requireAdmin(interaction, () => handleStaff(interaction));
       break;
     }
@@ -787,6 +780,24 @@ async function handleStaff(interaction) {
   const role = interaction.options.getRole("role");
   const quarantinedRole = interaction.options.getRole("quarantined_role");
   const guildId = interaction.guildId;
+  const guild = interaction.guild;
+
+  // Validate that both roles actually exist in the guild before using them.
+  if (!role || !guild.roles.cache.has(role.id)) {
+    await interaction.reply({
+      content: "The selected staff role is invalid or no longer exists in this server. Please select a valid role and try again.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  if (!quarantinedRole || !guild.roles.cache.has(quarantinedRole.id)) {
+    await interaction.reply({
+      content: "The selected quarantined role is invalid or no longer exists in this server. Please select a valid role and try again.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
 
   staffRoles.set(guildId, role.id);
   quarantinedRoles.set(guildId, quarantinedRole.id);
@@ -818,7 +829,7 @@ async function handleQuarantine(interaction) {
   if (!quarantinedRoleId) {
     await interaction.reply({
       content:
-        "No quarantined role has been set for this server. An administrator can set one with /staff.",
+        "No quarantined role has been set for this server. An administrator can set one with /qt-staff.",
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -828,7 +839,7 @@ async function handleQuarantine(interaction) {
   if (!quarantineRole) {
     await interaction.reply({
       content:
-        "The configured quarantined role no longer exists. An administrator can set a new one with /staff.",
+        "The configured quarantined role no longer exists. An administrator can set a new one with /qt-staff.",
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -923,7 +934,7 @@ async function handleUnquarantine(interaction) {
   if (!quarantinedRoleId) {
     await interaction.reply({
       content:
-        "No quarantined role has been set for this server. An administrator can set one with /staff.",
+        "No quarantined role has been set for this server. An administrator can set one with /qt-staff.",
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -1219,7 +1230,7 @@ async function requireStaff(interaction, fn) {
   if (!staffRoleId) {
     await interaction.reply({
       content:
-        "No staff role has been set for this server. An administrator can set one with /staff.",
+        "No staff role has been set for this server. An administrator can set one with /qt-staff.",
       flags: MessageFlags.Ephemeral,
     });
     return;
