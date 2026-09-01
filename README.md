@@ -30,6 +30,7 @@ All prefix commands start with `!u`:
 | Command | Permission | Description |
 | --- | --- | --- |
 | `!u emoji <name>` | Manage Expressions | Adds an attached image as a custom server emoji. Attach an image to your message and provide the emoji name. |
+| `!u set role icon @Role` | Administrator or Manage Roles | Sets or changes the icon of an existing role. Attach one image (PNG, JPG/JPEG, or GIF) to the same message. |
 
 Administrator-only commands are hidden from and unusable by non-admins via Discord's default member permissions, and are re-checked server-side.
 

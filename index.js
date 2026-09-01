@@ -10,8 +10,6 @@ const {
   ActionRowBuilder,
   REST,
   Routes,
-  ActivityType,
-  Status,
 } = require("discord.js");
 require("dotenv").config();
 
@@ -45,18 +43,6 @@ const quarantineStore = new Map();
 
 const ADMIN_PERMISSION = PermissionFlagsBits.Administrator;
 
-// --- Bot startup time (in-memory only; resets on restart) -------------------
-let botStartupTime = null;
-
-// --- Rotating presence (in-memory only; resets on restart) -----------------
-// Lumi cycles through Watching activities with variable durations.
-const presenceActivities = [
-  { name: "/help", duration: 60000 },
-  { name: "Witch on the Holy Night", duration: 15000 },
-];
-let presenceTimer = null;
-let presenceIndex = 0;
-
 // --- Bot client ------------------------------------------------------------
 const client = new Client({
   intents: [
@@ -69,13 +55,9 @@ const client = new Client({
 
 client.once(Events.ClientReady, async (readyClient) => {
   console.log(`Ready! Logged in as ${readyClient.user.tag}`);
-  botStartupTime = Date.now();
 
-  // Rotating presence: cycle through Watching activities.
-  if (presenceTimer) clearTimeout(presenceTimer);
-  presenceIndex = 0;
-  updatePresence(readyClient);
-
+  // Auto-register slash commands so they appear in Discord without a manual
+  // deploy step. Uses the bot application's own ID (the logged-in user).
   const clientId = readyClient.user.id;
   const rest = new REST({ version: "10" }).setToken(token);
 
@@ -89,18 +71,6 @@ client.once(Events.ClientReady, async (readyClient) => {
     console.error("Failed to register application commands:", error);
   }
 });
-
-function updatePresence(c) {
-  const activity = presenceActivities[presenceIndex];
-  c.user.setPresence({
-    activities: [{ name: activity.name, type: ActivityType.Watching }],
-    status: Status.Online,
-  });
-  presenceTimer = setTimeout(() => {
-    presenceIndex = (presenceIndex + 1) % presenceActivities.length;
-    updatePresence(c);
-  }, activity.duration);
-}
 
 // --- Slash command handler -------------------------------------------------
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -157,7 +127,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await requireAdmin(interaction, () => handleRole(interaction));
       break;
     }
-    case "qt-staff": {
+    case "staff": {
       await requireAdmin(interaction, () => handleStaff(interaction));
       break;
     }
@@ -176,10 +146,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         "Manage Messages",
         () => handlePurgeUserSlash(interaction)
       );
-      break;
-    }
-    case "info": {
-      await handleInfo(interaction);
       break;
     }
     default:
@@ -256,7 +222,7 @@ client.on(Events.MessageCreate, async (message) => {
     /* old message may already be gone */
   }
 
-  const stickyText = `## 📌 __Stickied Message__\n${sticky.content}`;
+  const stickyText = `📌 __Stickied Message__\n${sticky.content}`;
 
   try {
     const sent = await message.channel.send(stickyText);
@@ -284,50 +250,15 @@ client.on(Events.MessageCreate, async (message) => {
     case "emoji":
       await prefixEmoji(message, args);
       break;
+    case "set":
+      await prefixSet(message, args);
+      break;
     default:
       break;
   }
 });
 
 // --- Command implementations ----------------------------------------------
-
-async function handleInfo(interaction) {
-  const inviteUrl =
-    "https://discord.com/oauth2/authorize?client_id=1543079364604985364&permissions=8&scope=bot%20applications.commands";
-
-  const ping = Math.round(interaction.client.ws.ping);
-  const pingText = Number.isNaN(ping) ? "Connecting…" : `${ping} ms`;
-
-  const uptimeText = botStartupTime
-    ? formatDuration(Date.now() - botStartupTime)
-    : "Unknown";
-
-  const avatarUrl = interaction.client.user.displayAvatarURL({
-    size: 4096,
-    extension: "png",
-  });
-
-  const embed = new EmbedBuilder()
-    .setColor("#006400")
-    .setTitle("Lumi — Bot Info")
-    .setThumbnail(avatarUrl)
-    .addFields(
-      { name: "Name", value: "Lumi", inline: true },
-      { name: "Ping", value: pingText, inline: true },
-      { name: "Restarted", value: uptimeText, inline: true }
-    )
-    .setFooter({ text: `Requested by ${interaction.user.tag}` })
-    .setTimestamp();
-
-  const inviteButton = new ButtonBuilder()
-    .setLabel("Invite Lumi")
-    .setStyle(ButtonStyle.Link)
-    .setURL(inviteUrl);
-
-  const row = new ActionRowBuilder().addComponents(inviteButton);
-
-  await interaction.reply({ embeds: [embed], components: [row] });
-}
 
 async function handleAfk(interaction) {
   const reason = interaction.options.getString("reason") || "No reason provided.";
@@ -662,7 +593,7 @@ async function handleSticky(interaction) {
     }
   }
 
-  const stickyText = `## 📌 __Stickied Message__\n${content}`;
+  const stickyText = `📌 __Stickied Message__\n${content}`;
 
   const sent = await interaction.channel.send(stickyText);
 
@@ -777,24 +708,6 @@ async function handleStaff(interaction) {
   const role = interaction.options.getRole("role");
   const quarantinedRole = interaction.options.getRole("quarantined_role");
   const guildId = interaction.guildId;
-  const guild = interaction.guild;
-
-  // Validate that both roles actually exist in the guild before using them.
-  if (!role || !guild.roles.cache.has(role.id)) {
-    await interaction.reply({
-      content: "The selected staff role is invalid or no longer exists in this server. Please select a valid role and try again.",
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-
-  if (!quarantinedRole || !guild.roles.cache.has(quarantinedRole.id)) {
-    await interaction.reply({
-      content: "The selected quarantined role is invalid or no longer exists in this server. Please select a valid role and try again.",
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
 
   staffRoles.set(guildId, role.id);
   quarantinedRoles.set(guildId, quarantinedRole.id);
@@ -826,7 +739,7 @@ async function handleQuarantine(interaction) {
   if (!quarantinedRoleId) {
     await interaction.reply({
       content:
-        "No quarantined role has been set for this server. An administrator can set one with /qt-staff.",
+        "No quarantined role has been set for this server. An administrator can set one with /staff.",
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -836,7 +749,7 @@ async function handleQuarantine(interaction) {
   if (!quarantineRole) {
     await interaction.reply({
       content:
-        "The configured quarantined role no longer exists. An administrator can set a new one with /qt-staff.",
+        "The configured quarantined role no longer exists. An administrator can set a new one with /staff.",
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -931,7 +844,7 @@ async function handleUnquarantine(interaction) {
   if (!quarantinedRoleId) {
     await interaction.reply({
       content:
-        "No quarantined role has been set for this server. An administrator can set one with /qt-staff.",
+        "No quarantined role has been set for this server. An administrator can set one with /staff.",
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -1079,27 +992,10 @@ async function handlePurgeUserSlash(interaction) {
 
 async function prefixEmoji(message, args) {
   // !u emoji [image attachment] [name]
-
-  // Resolve the member's permissions reliably. message.memberPermissions can
-  // be null when the member isn't fully cached, so we use message.member
-  // and fall back to a fetch if needed. Server owners implicitly pass.
-  let member = message.member;
-  if (!member) {
-    try {
-      member = await message.guild.members.fetch(message.author.id);
-    } catch {
-      await message.reply("Could not resolve your member data. Please try again.");
-      return;
-    }
-  }
-
-  const isOwner = message.guild.ownerId === message.author.id;
-  const hasPermission =
-    isOwner ||
-    (member.permissions &&
-      member.permissions.has(PermissionFlagsBits.ManageGuildExpressions));
-
-  if (!hasPermission) {
+  if (
+    !message.memberPermissions ||
+    !message.memberPermissions.has(PermissionFlagsBits.ManageGuildExpressions)
+  ) {
     await message.reply("You need the **Manage Expressions** permission to use this command.");
     return;
   }
@@ -1189,6 +1085,147 @@ async function prefixEmoji(message, args) {
   }
 }
 
+// --- Prefix: !u set -------------------------------------------------------
+
+async function prefixSet(message, args) {
+  // !u set <target> ...
+  const target = args[1]?.toLowerCase();
+
+  switch (target) {
+    case "role":
+      await prefixSetRole(message, args);
+      break;
+    default:
+      await message.reply("Usage: `!u set role icon @Role` (with an attached image)");
+      break;
+  }
+}
+
+async function prefixSetRole(message, args) {
+  // !u set role <action> ...
+  const action = args[2]?.toLowerCase();
+
+  switch (action) {
+    case "icon":
+      await prefixSetRoleIcon(message, args);
+      break;
+    default:
+      await message.reply("Usage: `!u set role icon @Role` (with an attached image)");
+      break;
+  }
+}
+
+async function prefixSetRoleIcon(message, args) {
+  // !u set role icon @Role  (with an attached image)
+  // Require Administrator OR Manage Roles.
+  if (
+    !message.memberPermissions ||
+    (!message.memberPermissions.has(ADMIN_PERMISSION) &&
+      !message.memberPermissions.has(PermissionFlagsBits.ManageRoles))
+  ) {
+    await message.reply("You need the **Administrator** or **Manage Roles** permission to use this command.");
+    return;
+  }
+
+  // The role is the 4th argument: !u set role icon @Role
+  const roleArg = args.slice(3).join(" ");
+
+  if (!roleArg) {
+    await message.reply("Please mention a role or provide a role name. Usage: `!u set role icon @Role`");
+    return;
+  }
+
+  // Resolve role from mention or name.
+  const role = resolveRoleArgument(message.guild, roleArg);
+  if (!role) {
+    await message.reply("Could not find that role. Mention it (e.g. @Role) or use its exact name.");
+    return;
+  }
+
+  // Require exactly one image attachment.
+  const imageAttachments = message.attachments.filter(
+    (a) => a.contentType && a.contentType.startsWith("image/")
+  );
+
+  if (imageAttachments.size === 0) {
+    await message.reply("Please attach **one image** (PNG, JPG/JPEG, or GIF) to your message to use as the role icon.");
+    return;
+  }
+
+  if (imageAttachments.size > 1) {
+    await message.reply("Please attach only **one image**. Multiple image attachments were detected.");
+    return;
+  }
+
+  const attachment = imageAttachments.first();
+
+  // Validate image format.
+  const validTypes = ["image/png", "image/jpeg", "image/gif"];
+  if (!validTypes.includes(attachment.contentType)) {
+    await message.reply("The attached file must be a **PNG, JPG/JPEG, or GIF** image.");
+    return;
+  }
+
+  // Check bot permissions and role hierarchy.
+  const botMember = await message.guild.members.fetchMe();
+
+  if (!botMember.permissions.has(PermissionFlagsBits.ManageRoles)) {
+    await message.reply("I don't have the **Manage Roles** permission. Please grant it to me and try again.");
+    return;
+  }
+
+  if (role.position >= botMember.roles.highest.position) {
+    await message.reply(
+      `I can't modify **${role.name}** because it is at or above my highest role. Move my role above it in the server settings and try again.`
+    );
+    return;
+  }
+
+  // Download and read the attached image.
+  let base64Data;
+  try {
+    const response = await fetch(attachment.url);
+    if (!response.ok) {
+      await message.reply("Could not download the attached image. Please try again.");
+      return;
+    }
+    const buffer = await response.arrayBuffer();
+    base64Data = Buffer.from(buffer).toString("base64");
+  } catch {
+    await message.reply("Could not read the attached image. Please try again.");
+    return;
+  }
+
+  const dataUri = `data:${attachment.contentType};base64,${base64Data}`;
+
+  // Set the role icon via the Discord API.
+  try {
+    await role.setIcon(dataUri);
+  } catch (error) {
+    const errCode = error?.code;
+    let errMsg = "Could not update the role icon. Please try again.";
+
+    if (errCode === 50013) {
+      errMsg = "I don't have permission to manage that role. Make sure I have the Manage Roles permission and my role is high enough.";
+    } else if (errCode === 50035) {
+      errMsg = "The image is invalid or too large. Discord role icons must be a valid PNG, JPG, or GIF under 256 KB.";
+    }
+
+    await message.reply(errMsg);
+    return;
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor("#006400")
+    .setTitle("✅ Role Icon Updated")
+    .setDescription(`The icon for **${role.name}** has been updated successfully.`)
+    .setThumbnail(role.iconURL())
+    .setFooter({ text: `Updated by ${message.author.tag}` })
+    .setTimestamp();
+
+  await message.reply({ embeds: [embed] });
+}
+
 // --- Helpers ---------------------------------------------------------------
 
 async function requireAdmin(interaction, fn) {
@@ -1227,7 +1264,7 @@ async function requireStaff(interaction, fn) {
   if (!staffRoleId) {
     await interaction.reply({
       content:
-        "No staff role has been set for this server. An administrator can set one with /qt-staff.",
+        "No staff role has been set for this server. An administrator can set one with /staff.",
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -1295,6 +1332,28 @@ async function resolveDisplayName(interaction, user) {
     if (member) return member.displayName;
   }
   return user.globalName ?? user.tag;
+}
+
+// Resolves a role from a mention (<@&id>) or by name.
+function resolveRoleArgument(guild, arg) {
+  // Role mention: <@&role_id>
+  const mentionMatch = arg.match(/^<@&(\d+)>$/);
+  if (mentionMatch) {
+    return guild.roles.cache.get(mentionMatch[1]) || null;
+  }
+
+  // Try by name (case-insensitive).
+  const byName = guild.roles.cache.find(
+    (r) => r.name.toLowerCase() === arg.toLowerCase()
+  );
+  if (byName) return byName;
+
+  // Try as a raw ID.
+  if (/^\d{17,20}$/.test(arg)) {
+    return guild.roles.cache.get(arg) || null;
+  }
+
+  return null;
 }
 
 client.login(token);
