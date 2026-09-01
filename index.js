@@ -167,7 +167,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await requireAdmin(interaction, () => handleRole(interaction));
       break;
     }
-    case "staff": {
+    case "qt-staff": {
       await requireAdmin(interaction, () => handleStaff(interaction));
       break;
     }
@@ -788,6 +788,22 @@ async function handleStaff(interaction) {
   const quarantinedRole = interaction.options.getRole("quarantined_role");
   const guildId = interaction.guildId;
 
+  if (!role || !role.id) {
+    await interaction.reply({
+      content: "The staff role you selected could not be resolved. Please try again.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  if (!quarantinedRole || !quarantinedRole.id) {
+    await interaction.reply({
+      content: "The quarantined role you selected could not be resolved. Please try again.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
   staffRoles.set(guildId, role.id);
   quarantinedRoles.set(guildId, quarantinedRole.id);
 
@@ -818,7 +834,7 @@ async function handleQuarantine(interaction) {
   if (!quarantinedRoleId) {
     await interaction.reply({
       content:
-        "No quarantined role has been set for this server. An administrator can set one with /staff.",
+        "No quarantined role has been set for this server. An administrator can set one with /qt-staff.",
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -828,7 +844,7 @@ async function handleQuarantine(interaction) {
   if (!quarantineRole) {
     await interaction.reply({
       content:
-        "The configured quarantined role no longer exists. An administrator can set a new one with /staff.",
+        "The configured quarantined role no longer exists. An administrator can set a new one with /qt-staff.",
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -895,9 +911,9 @@ async function handleQuarantine(interaction) {
     .setTitle("🔒 Member Quarantined")
     .addFields(
       { name: "Member", value: `${targetUser} (\`${targetUser.id}\`)`, inline: false },
-      { name: "️", value: "​", inline: false },
+      { name: "\uFE0F", value: "\u200b", inline: false },
       { name: "Quarantined by", value: `${interaction.user}`, inline: false },
-      { name: "️", value: "​", inline: false },
+      { name: "\uFE0F", value: "\u200b", inline: false },
       { name: "Reason:", value: reason || "No reason provided.", inline: false }
     )
     .setTimestamp();
@@ -925,7 +941,7 @@ async function handleUnquarantine(interaction) {
   if (!quarantinedRoleId) {
     await interaction.reply({
       content:
-        "No quarantined role has been set for this server. An administrator can set one with /staff.",
+        "No quarantined role has been set for this server. An administrator can set one with /qt-staff.",
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -993,9 +1009,9 @@ async function handleUnquarantine(interaction) {
     .setTitle("🔓 Member Unquarantined")
     .addFields(
       { name: "Member", value: `${targetUser} (\`${targetUser.id}\`)`, inline: false },
-      { name: "️", value: "​", inline: false },
+      { name: "\uFE0F", value: "\u200b", inline: false },
       { name: "Unquarantined by", value: `${interaction.user}`, inline: false },
-      { name: "️", value: "​", inline: false },
+      { name: "\uFE0F", value: "\u200b", inline: false },
       { name: "Roles restored", value: restoredCount > 0 ? `${restoredCount}` : "none", inline: false }
     )
     .setTimestamp();
@@ -1226,7 +1242,7 @@ async function requireStaff(interaction, fn) {
   if (!staffRoleId) {
     await interaction.reply({
       content:
-        "No staff role has been set for this server. An administrator can set one with /staff.",
+        "No staff role has been set for this server. An administrator can set one with /qt-staff.",
       flags: MessageFlags.Ephemeral,
     });
     return;
