@@ -1118,10 +1118,12 @@ async function prefixSetRole(message, args) {
 async function prefixSetRoleIcon(message, args) {
   // !u set role icon @Role  (with an attached image)
   // Require Administrator OR Manage Roles.
+  const member = message.member;
   if (
-    !message.memberPermissions ||
-    (!message.memberPermissions.has(ADMIN_PERMISSION) &&
-      !message.memberPermissions.has(PermissionFlagsBits.ManageRoles))
+    !member ||
+    !member.permissions ||
+    (!member.permissions.has(PermissionFlagsBits.Administrator) &&
+      !member.permissions.has(PermissionFlagsBits.ManageRoles))
   ) {
     await message.reply("You need the **Administrator** or **Manage Roles** permission to use this command.");
     return;
