@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require("discord.js");
+const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
 
 // All slash command definitions live here so both index.js (auto-register on
 // startup) and deploy-commands.js (manual CLI deploy) stay perfectly in sync.
@@ -237,19 +237,6 @@ const commandDefinitions = [
   new SlashCommandBuilder()
     .setName("info")
     .setDescription("Show information about Lumi, including ping and uptime.")
-    .toJSON(),
-
-  new SlashCommandBuilder()
-    .setName("arcane-seal")
-    .setDescription("Cast an arcane seal that temporarily locks a channel (admin only).")
-    .addChannelOption((option) =>
-      option
-        .setName("channel")
-        .setDescription("The channel to seal.")
-        .setRequired(true)
-        .addChannelTypes(ChannelType.GuildText)
-    )
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .toJSON(),
 ];
 
