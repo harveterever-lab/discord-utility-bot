@@ -49,16 +49,12 @@ const ADMIN_PERMISSION = PermissionFlagsBits.Administrator;
 let botStartupTime = null;
 
 // --- Rotating presence (in-memory only; resets on restart) -----------------
-// Lumi cycles through a playlist every 10 seconds.
-const presenceSongs = [
-  "oui — Jeremih",
-  "God's Plan — Drake",
-  "Neon Kitchen — Devon Hendryx",
-  "One Dance — Drake",
-  "FE!N — Travis Scott ft. Playboi Carti",
-  "Shoota — Playboi Carti ft. Lil Uzi Vert",
+// Lumi cycles through Watching activities with variable durations.
+const presenceActivities = [
+  { name: "/help", duration: 60000 },
+  { name: "Witch on the Holy Night", duration: 15000 },
 ];
-let presenceInterval = null;
+let presenceTimer = null;
 let presenceIndex = 0;
 
 // --- Bot client ------------------------------------------------------------
@@ -75,14 +71,10 @@ client.once(Events.ClientReady, async (readyClient) => {
   console.log(`Ready! Logged in as ${readyClient.user.tag}`);
   botStartupTime = Date.now();
 
-  // Rotating presence: cycle through the playlist every 10 seconds.
-  if (presenceInterval) clearInterval(presenceInterval);
+  // Rotating presence: cycle through Watching activities.
+  if (presenceTimer) clearTimeout(presenceTimer);
   presenceIndex = 0;
   updatePresence(readyClient);
-  presenceInterval = setInterval(() => {
-    presenceIndex = (presenceIndex + 1) % presenceSongs.length;
-    updatePresence(readyClient);
-  }, 10000);
 
   const clientId = readyClient.user.id;
   const rest = new REST({ version: "10" }).setToken(token);
@@ -99,10 +91,15 @@ client.once(Events.ClientReady, async (readyClient) => {
 });
 
 function updatePresence(c) {
+  const activity = presenceActivities[presenceIndex];
   c.user.setPresence({
-    activities: [{ name: presenceSongs[presenceIndex], type: ActivityType.Listening }],
+    activities: [{ name: activity.name, type: ActivityType.Watching }],
     status: Status.Online,
   });
+  presenceTimer = setTimeout(() => {
+    presenceIndex = (presenceIndex + 1) % presenceActivities.length;
+    updatePresence(c);
+  }, activity.duration);
 }
 
 // --- Slash command handler -------------------------------------------------
