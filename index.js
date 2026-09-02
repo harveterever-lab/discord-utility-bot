@@ -52,19 +52,6 @@ const autoDeleteConfigs = new Map();
 // --- Bot startup time (in-memory only; resets on restart) -------------------
 let botStartupTime = null;
 
-// --- Rotating presence (in-memory only; resets on restart) -----------------
-// Lumi cycles through a playlist every 10 seconds.
-const presenceSongs = [
-  "oui — Jeremih",
-  "God's Plan — Drake",
-  "Neon Kitchen — Devon Hendryx",
-  "One Dance — Drake",
-  "FE!N — Travis Scott ft. Playboi Carti",
-  "Shoota — Playboi Carti ft. Lil Uzi Vert",
-];
-let presenceInterval = null;
-let presenceIndex = 0;
-
 // --- Bot client ------------------------------------------------------------
 const client = new Client({
   intents: [
@@ -95,25 +82,11 @@ client.once(Events.ClientReady, async (readyClient) => {
     console.error("Failed to register application commands:", error);
   }
 
-  // --- Rotating presence -----------------------------------------------
-  // Guard against duplicate intervals (e.g. if the ready event fires more
-  // than once during development or after a reconnection).
-  if (presenceInterval) {
-    clearInterval(presenceInterval);
-    presenceInterval = null;
-  }
-
-  const setPresence = () => {
-    const song = presenceSongs[presenceIndex];
-    readyClient.user.setPresence({
-      activities: [{ name: song, type: ActivityType.Listening }],
-      status: Status.Online,
-    });
-    presenceIndex = (presenceIndex + 1) % presenceSongs.length;
-  };
-
-  setPresence();
-  presenceInterval = setInterval(setPresence, 10_000);
+  // --- Static presence -------------------------------------------------
+  readyClient.user.setPresence({
+    activities: [{ name: "/help", type: ActivityType.Watching }],
+    status: Status.Online,
+  });
 });
 
 // --- Slash command handler -------------------------------------------------
