@@ -46,7 +46,7 @@ const quarantineStore = new Map();
 const ADMIN_PERMISSION = PermissionFlagsBits.Administrator;
 
 // --- Auto-delete store (in-memory only; resets on restart) ------------------
-// Map<channelId, { type: "Bot"|"User"|"All", delayMs: number }>
+// Map<channelId, { type: "Bot"|"User"|"All", delayMs: number, except: Set<userId> }>
 const autoDeleteConfigs = new Map();
 
 // --- Bot startup time (in-memory only; resets on restart) -------------------
@@ -301,6 +301,10 @@ client.on(Events.MessageCreate, async (message) => {
 
   const config = autoDeleteConfigs.get(message.channelId);
   if (!config) return;
+
+  // Messages from anyone in the exception list are never deleted.
+  // Lumi is always excluded automatically (checked above via client.user.id).
+  if (config.except && config.except.has(message.author.id)) return;
 
   let shouldDelete = false;
   if (config.type === "All") {
@@ -1270,8 +1274,16 @@ async function handleAutoDelete(interaction) {
     return;
   }
 
+  // Build the exception set. Lumi is always excluded automatically.
+  const except = new Set();
+  except.add(client.user.id);
+  for (let i = 0; i < 5; i++) {
+    const user = interaction.options.getUser(i === 0 ? "except" : `except_${i + 1}`);
+    if (user) except.add(user.id);
+  }
+
   // Re-running /autodelete replaces the existing config (Map.set overwrites).
-  autoDeleteConfigs.set(channel.id, { type, delayMs });
+  autoDeleteConfigs.set(channel.id, { type, delayMs, except });
 
   const embed = new EmbedBuilder()
     .setColor("#006400")

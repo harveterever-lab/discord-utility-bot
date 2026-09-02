@@ -287,6 +287,36 @@ const commandDefinitions = [
           { name: "1h", value: "1h" }
         )
     )
+    .addUserOption((option) =>
+      option
+        .setName("except")
+        .setDescription("A user/bot whose messages should NOT be auto-deleted.")
+        .setRequired(false)
+    )
+    .addUserOption((option) =>
+      option
+        .setName("except_2")
+        .setDescription("Another user/bot to exclude from auto-delete.")
+        .setRequired(false)
+    )
+    .addUserOption((option) =>
+      option
+        .setName("except_3")
+        .setDescription("Another user/bot to exclude from auto-delete.")
+        .setRequired(false)
+    )
+    .addUserOption((option) =>
+      option
+        .setName("except_4")
+        .setDescription("Another user/bot to exclude from auto-delete.")
+        .setRequired(false)
+    )
+    .addUserOption((option) =>
+      option
+        .setName("except_5")
+        .setDescription("Another user/bot to exclude from auto-delete.")
+        .setRequired(false)
+    )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .toJSON(),
 
