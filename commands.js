@@ -251,6 +251,57 @@ const commandDefinitions = [
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName("autodelete")
+    .setDescription("Auto-delete new messages in a channel after a delay (admin only).")
+    .addChannelOption((option) =>
+      option
+        .setName("channel")
+        .setDescription("The channel to auto-delete messages in.")
+        .setRequired(true)
+        .addChannelTypes(ChannelType.GuildText)
+    )
+    .addStringOption((option) =>
+      option
+        .setName("type")
+        .setDescription("Which messages to auto-delete.")
+        .setRequired(true)
+        .addChoices(
+          { name: "Bot", value: "Bot" },
+          { name: "User", value: "User" },
+          { name: "All", value: "All" }
+        )
+    )
+    .addStringOption((option) =>
+      option
+        .setName("delay")
+        .setDescription("How long to wait before deleting each message.")
+        .setRequired(true)
+        .addChoices(
+          { name: "5s", value: "5s" },
+          { name: "15s", value: "15s" },
+          { name: "30s", value: "30s" },
+          { name: "1m", value: "1m" },
+          { name: "5m", value: "5m" },
+          { name: "1h", value: "1h" }
+        )
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName("autodisable")
+    .setDescription("Disable auto-delete for a channel (admin only).")
+    .addChannelOption((option) =>
+      option
+        .setName("channel")
+        .setDescription("The channel to disable auto-delete in.")
+        .setRequired(true)
+        .addChannelTypes(ChannelType.GuildText)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .toJSON(),
 ];
 
 module.exports = { commandDefinitions };

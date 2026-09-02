@@ -45,6 +45,10 @@ const quarantineStore = new Map();
 
 const ADMIN_PERMISSION = PermissionFlagsBits.Administrator;
 
+// --- Auto-delete store (in-memory only; resets on restart) ------------------
+// Map<channelId, { type: "Bot"|"User"|"All", delayMs: number }>
+const autoDeleteConfigs = new Map();
+
 // --- Bot startup time (in-memory only; resets on restart) -------------------
 let botStartupTime = null;
 
@@ -188,6 +192,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
       );
       break;
     }
+    case "autodelete": {
+      await requireAdmin(interaction, () => handleAutoDelete(interaction));
+      break;
+    }
+    case "autodisable": {
+      await requireAdmin(interaction, () => handleAutoDisable(interaction));
+      break;
+    }
     case "info": {
       await handleInfo(interaction);
       break;
@@ -274,6 +286,37 @@ client.on(Events.MessageCreate, async (message) => {
   } catch {
     /* ignore */
   }
+});
+
+// --- Auto-delete listener --------------------------------------------------
+// Each matching message gets its own independent timer. Lumi never deletes
+// its own messages. Only new messages arriving after a config is set are
+// affected; re-running /autodelete simply replaces the Map entry (no duplicate
+// listeners since we use a single listener that reads from the Map).
+client.on(Events.MessageCreate, async (message) => {
+  if (!message.guild) return;
+
+  // Lumi must NEVER delete its own messages.
+  if (message.author.id === client.user.id) return;
+
+  const config = autoDeleteConfigs.get(message.channelId);
+  if (!config) return;
+
+  let shouldDelete = false;
+  if (config.type === "All") {
+    shouldDelete = true;
+  } else if (config.type === "Bot") {
+    shouldDelete = message.author.bot;
+  } else if (config.type === "User") {
+    shouldDelete = !message.author.bot;
+  }
+
+  if (!shouldDelete) return;
+
+  // Each message gets its own independent timer.
+  setTimeout(() => {
+    message.delete().catch(() => {});
+  }, config.delayMs);
 });
 
 // --- Prefix command handler (!u) -------------------------------------------
@@ -1198,6 +1241,73 @@ async function prefixEmoji(message, args) {
 
     await message.reply(errMsg);
   }
+}
+
+// --- Auto-delete / Auto-disable -------------------------------------------
+
+function parseDelayToMs(delay) {
+  const match = delay.match(/^(\d+)(s|m|h)$/);
+  if (!match) return null;
+  const value = parseInt(match[1], 10);
+  const unit = match[2];
+  if (unit === "s") return value * 1000;
+  if (unit === "m") return value * 60 * 1000;
+  if (unit === "h") return value * 60 * 60 * 1000;
+  return null;
+}
+
+async function handleAutoDelete(interaction) {
+  const channel = interaction.options.getChannel("channel");
+  const type = interaction.options.getString("type");
+  const delay = interaction.options.getString("delay");
+
+  const delayMs = parseDelayToMs(delay);
+  if (delayMs === null) {
+    await interaction.reply({
+      content: "Invalid delay value.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  // Re-running /autodelete replaces the existing config (Map.set overwrites).
+  autoDeleteConfigs.set(channel.id, { type, delayMs });
+
+  const embed = new EmbedBuilder()
+    .setColor("#006400")
+    .setTitle("Auto-Delete Enabled")
+    .addFields(
+      { name: "Channel", value: `${channel}`, inline: false },
+      { name: "Type", value: type, inline: false },
+      { name: "Delay", value: delay, inline: false }
+    )
+    .setFooter({ text: `Configured by ${interaction.user.tag}` })
+    .setTimestamp();
+
+  await interaction.reply({ embeds: [embed] });
+}
+
+async function handleAutoDisable(interaction) {
+  const channel = interaction.options.getChannel("channel");
+
+  if (!autoDeleteConfigs.has(channel.id)) {
+    await interaction.reply({
+      content: `Auto-delete is not currently enabled for ${channel}.`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  autoDeleteConfigs.delete(channel.id);
+
+  const embed = new EmbedBuilder()
+    .setColor("#006400")
+    .setTitle("Auto-Delete Disabled")
+    .setDescription(`Auto-delete has been disabled for ${channel}.`)
+    .setFooter({ text: `Disabled by ${interaction.user.tag}` })
+    .setTimestamp();
+
+  await interaction.reply({ embeds: [embed] });
 }
 
 // --- Helpers ---------------------------------------------------------------
